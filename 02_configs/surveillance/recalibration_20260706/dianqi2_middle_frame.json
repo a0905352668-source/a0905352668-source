@@ -1,0 +1,304 @@
+{
+  "version": "3.2.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1994.2708333333335,
+          432.23958333333326
+        ],
+        [
+          1987.5,
+          506.71874999999994
+        ],
+        [
+          2106.25,
+          527.03125
+        ],
+        [
+          2114.0625,
+          448.3854166666666
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          783.4905660377358,
+          284.85849056603774
+        ],
+        [
+          779.7169811320755,
+          333.91509433962267
+        ],
+        [
+          851.4150943396226,
+          326.3679245283019
+        ],
+        [
+          852.8301886792452,
+          275.4245283018868
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          575.9433962264151,
+          378.2547169811321
+        ],
+        [
+          575.4716981132075,
+          411.74528301886795
+        ],
+        [
+          626.8867924528302,
+          407.02830188679246
+        ],
+        [
+          626.8867924528302,
+          390.5188679245283
+        ]
+      ],
+      "group_id": null,
+      "description": null,
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1268.3962264150944,
+          422.122641509434
+        ],
+        [
+          1257.0754716981132,
+          509.3867924528302
+        ],
+        [
+          1266.509433962264,
+          536.2735849056604
+        ],
+        [
+          1277.3584905660377,
+          458.44339622641513
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          2182.0754716981132,
+          495.70754716981133
+        ],
+        [
+          2164.1509433962265,
+          541.933962264151
+        ],
+        [
+          2200.943396226415,
+          558.9150943396227
+        ],
+        [
+          2214.1509433962265,
+          514.1037735849056
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1778.7735849056603,
+          301.3679245283019
+        ],
+        [
+          1771.698113207547,
+          351.3679245283019
+        ],
+        [
+          1839.6226415094338,
+          355.1415094339623
+        ],
+        [
+          1847.6415094339623,
+          308.44339622641513
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1337.7358490566037,
+          298.0660377358491
+        ],
+        [
+          1337.264150943396,
+          339.57547169811323
+        ],
+        [
+          1397.6415094339623,
+          333.91509433962267
+        ],
+        [
+          1400.4716981132074,
+          292.4056603773585
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1336.7924528301887,
+          356.0849056603774
+        ],
+        [
+          1335.8490566037735,
+          403.2547169811321
+        ],
+        [
+          1429.245283018868,
+          402.78301886792457
+        ],
+        [
+          1432.5471698113206,
+          365.04716981132077
+        ],
+        [
+          1342.9245283018868,
+          356.5566037735849
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1216.509433962264,
+          282.02830188679246
+        ],
+        [
+          1218.8679245283017,
+          330.1415094339623
+        ],
+        [
+          1278.3018867924527,
+          338.16037735849056
+        ],
+        [
+          1276.8867924528302,
+          288.16037735849056
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1187.7358490566037,
+          385.3301886792453
+        ],
+        [
+          1266.0377358490566,
+          370.2358490566038
+        ],
+        [
+          1270.2830188679245,
+          401.83962264150944
+        ],
+        [
+          1186.7924528301887,
+          399.9528301886793
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "dianqi2_middle_frame.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560
+}

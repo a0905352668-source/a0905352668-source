@@ -1,0 +1,213 @@
+{
+  "version": "3.2.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          469.27083333333337,
+          438.48958333333326
+        ],
+        [
+          475.0,
+          520.78125
+        ],
+        [
+          573.9583333333334,
+          497.86458333333326
+        ],
+        [
+          570.8333333333334,
+          418.6979166666666
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          781.25,
+          275.98958333333326
+        ],
+        [
+          782.2916666666667,
+          321.8229166666666
+        ],
+        [
+          858.3333333333334,
+          316.61458333333326
+        ],
+        [
+          857.2916666666667,
+          266.09374999999994
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1200.5208333333335,
+          282.7604166666666
+        ],
+        [
+          1196.875,
+          329.6354166666666
+        ],
+        [
+          1268.2291666666667,
+          337.96874999999994
+        ],
+        [
+          1274.4791666666667,
+          289.53124999999994
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1189.5833333333335,
+          355.67708333333326
+        ],
+        [
+          1188.0208333333335,
+          395.78124999999994
+        ],
+        [
+          1275.5208333333335,
+          395.78124999999994
+        ],
+        [
+          1276.5625,
+          342.65624999999994
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1369.7916666666667,
+          279.6354166666666
+        ],
+        [
+          1363.0208333333335,
+          353.59374999999994
+        ],
+        [
+          1459.8958333333335,
+          367.65624999999994
+        ],
+        [
+          1472.3958333333335,
+          293.6979166666666
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          1366.1458333333335,
+          394.73958333333326
+        ],
+        [
+          1353.125,
+          472.34374999999994
+        ],
+        [
+          1446.3541666666667,
+          458.28124999999994
+        ],
+        [
+          1458.8541666666667,
+          380.15624999999994
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          2020.0,
+          417.64705882352945
+        ],
+        [
+          2010.5882352941178,
+          488.8235294117647
+        ],
+        [
+          2122.3529411764707,
+          518.2352941176471
+        ],
+        [
+          2130.5882352941176,
+          443.5294117647059
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "jixie2_middle_frame.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560
+}

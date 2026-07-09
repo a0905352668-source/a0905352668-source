@@ -1,0 +1,99 @@
+[
+  {
+    "view": "dianqi1",
+    "filename": "camera_01_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 0,
+    "note": "missing_json",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_01_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/dianqi1_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_01_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_01_screen_calibration_v21.json"
+  },
+  {
+    "view": "dianqi2",
+    "filename": "camera_02_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 10,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_02_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/dianqi2_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_02_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_02_screen_calibration_v21.json"
+  },
+  {
+    "view": "jixie1",
+    "filename": "camera_mechanical_01_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 12,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_mechanical_01_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/jixie1_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_mechanical_01_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_mechanical_01_screen_calibration_v21.json"
+  },
+  {
+    "view": "jixie2",
+    "filename": "camera_mechanical_02_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 7,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_mechanical_02_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/jixie2_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_mechanical_02_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_mechanical_02_screen_calibration_v21.json"
+  },
+  {
+    "view": "ruanjian1",
+    "filename": "camera_software_01_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 20,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_software_01_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/ruanjian1_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_software_01_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_software_01_screen_calibration_v21.json"
+  },
+  {
+    "view": "ruanjian2",
+    "filename": "camera_software_02_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 12,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_software_02_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/ruanjian2_labelme_v21_preview.jpg",
+    "backup_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_software_02_screen_calibration_v21.json.bak_before_labelme_20260706_103319",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_software_02_screen_calibration_v21.json"
+  },
+  {
+    "view": "zoulang",
+    "filename": "camera_corridor_screen_calibration_v21.json",
+    "frame_size": [
+      2560,
+      1440
+    ],
+    "screens": 2,
+    "note": "ok",
+    "generated_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/generated_v21_from_labelme_20260706_103319/camera_corridor_screen_calibration_v21.json",
+    "preview_path": "/media/boshi/Data/JianKong/02_configs/surveillance/recalibration_20260706/zoulang_labelme_v21_preview.jpg",
+    "official_path": "/media/boshi/Data/JianKong/02_configs/surveillance/camera_corridor_screen_calibration_v21.json"
+  }
+]

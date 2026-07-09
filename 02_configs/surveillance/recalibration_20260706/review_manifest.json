@@ -1,0 +1,72 @@
+[
+  {
+    "view": "dianqi1",
+    "label": "电气1",
+    "camera_id": "camera_01",
+    "filename": "camera_01_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/dianqi1_192.168.210.148/20260703_160002_dianqi1_192.168.210.148_part01.mkv",
+    "image": "dianqi1_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "dianqi2",
+    "label": "电气2",
+    "camera_id": "camera_02",
+    "filename": "camera_02_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/dianqi2_192.168.210.142/20260703_160002_dianqi2_192.168.210.142_part01.mkv",
+    "image": "dianqi2_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "jixie1",
+    "label": "机械1",
+    "camera_id": "camera_mechanical_01",
+    "filename": "camera_mechanical_01_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/jixie1_192.168.210.124/20260703_160002_jixie1_192.168.210.124_part01.mkv",
+    "image": "jixie1_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "jixie2",
+    "label": "机械2",
+    "camera_id": "camera_mechanical_02",
+    "filename": "camera_mechanical_02_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/jixie2_192.168.210.150/20260703_160002_jixie2_192.168.210.150_part01.mkv",
+    "image": "jixie2_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "ruanjian1",
+    "label": "软件1",
+    "camera_id": "camera_software_01",
+    "filename": "camera_software_01_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/ruanjian1_192.168.210.144/20260703_160002_ruanjian1_192.168.210.144_part01.mkv",
+    "image": "ruanjian1_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "ruanjian2",
+    "label": "软件2",
+    "camera_id": "camera_software_02",
+    "filename": "camera_software_02_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/ruanjian2_192.168.210.136/20260703_160002_ruanjian2_192.168.210.136_part01.mkv",
+    "image": "ruanjian2_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  },
+  {
+    "view": "zoulang",
+    "label": "走廊",
+    "camera_id": "camera_corridor",
+    "filename": "camera_corridor_screen_calibration_v21.json",
+    "video": "/media/boshi/Data/JianKong/03_raw_videos_and_frames/2026-07-03/zoulang_192.168.210.145/20260703_160002_zoulang_192.168.210.145_part01.mkv",
+    "image": "zoulang_middle_frame.jpg",
+    "width": 2560,
+    "height": 1440
+  }
+]

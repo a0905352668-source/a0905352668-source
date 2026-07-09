@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "camera_id": "camera_02",
+  "camera_source_name": "192.168.210.136_01_20260622165112135",
+  "description": "Fixed screen ROIs for surveillance camera 02, calibrated from manually checked frame 112135_000001.",
+  "reference_image": "192.168.210.136_01_20260622165112135_000001.jpg",
+  "reference_json": "/home/boshi/视频/监控/192.168.210.136_01_20260622165112135/frames_1fps_screen_phone_20260622/192.168.210.136_01_20260622165112135_000001.json",
+  "image_width": 1920,
+  "image_height": 1080,
+  "coordinate_system": "pixel_xy_origin_top_left_reference_resolution",
+  "screen_count": 8,
+  "screens": [
+    {
+      "id": "screen_01",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          1256.79,
+          292.37
+        ],
+        [
+          1281.04,
+          292.37
+        ],
+        [
+          1281.04,
+          343.16
+        ],
+        [
+          1256.79,
+          343.16
+        ]
+      ],
+      "bbox_xyxy": [
+        1256.79,
+        292.37,
+        1281.04,
+        343.16
+      ],
+      "width": 24.25,
+      "height": 50.79,
+      "area": 1231.61,
+      "source_description": ""
+    },
+    {
+      "id": "screen_02",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          668.87,
+          297.55
+        ],
+        [
+          706.13,
+          297.55
+        ],
+        [
+          706.13,
+          352.26
+        ],
+        [
+          668.87,
+          352.26
+        ]
+      ],
+      "bbox_xyxy": [
+        668.87,
+        297.55,
+        706.13,
+        352.26
+      ],
+      "width": 37.26,
+      "height": 54.72,
+      "area": 2038.98,
+      "source_description": ""
+    },
+    {
+      "id": "screen_03",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          880.62,
+          298.11
+        ],
+        [
+          929.66,
+          298.11
+        ],
+        [
+          929.66,
+          335.23
+        ],
+        [
+          880.62,
+          335.23
+        ]
+      ],
+      "bbox_xyxy": [
+        880.62,
+        298.11,
+        929.66,
+        335.23
+      ],
+      "width": 49.05,
+      "height": 37.12,
+      "area": 1820.42,
+      "source_description": "conf=0.3590"
+    },
+    {
+      "id": "screen_04",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          1472.39,
+          299.56
+        ],
+        [
+          1559.72,
+          299.56
+        ],
+        [
+          1559.72,
+          365.46
+        ],
+        [
+          1472.39,
+          365.46
+        ]
+      ],
+      "bbox_xyxy": [
+        1472.39,
+        299.56,
+        1559.72,
+        365.46
+      ],
+      "width": 87.33,
+      "height": 65.9,
+      "area": 5755.13,
+      "source_description": "conf=0.8838"
+    },
+    {
+      "id": "screen_05",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          1074.07,
+          299.78
+        ],
+        [
+          1146.01,
+          299.78
+        ],
+        [
+          1146.01,
+          366.3
+        ],
+        [
+          1074.07,
+          366.3
+        ]
+      ],
+      "bbox_xyxy": [
+        1074.07,
+        299.78,
+        1146.01,
+        366.3
+      ],
+      "width": 71.94,
+      "height": 66.51,
+      "area": 4784.7,
+      "source_description": "conf=0.9246"
+    },
+    {
+      "id": "screen_06",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          413.33,
+          315.59
+        ],
+        [
+          466.35,
+          315.59
+        ],
+        [
+          466.35,
+          377.78
+        ],
+        [
+          413.33,
+          377.78
+        ]
+      ],
+      "bbox_xyxy": [
+        413.33,
+        315.59,
+        466.35,
+        377.78
+      ],
+      "width": 53.02,
+      "height": 62.19,
+      "area": 3296.9,
+      "source_description": ""
+    },
+    {
+      "id": "screen_07",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          0.0,
+          533.34
+        ],
+        [
+          106.45,
+          533.34
+        ],
+        [
+          106.45,
+          656.42
+        ],
+        [
+          0.0,
+          656.42
+        ]
+      ],
+      "bbox_xyxy": [
+        0.0,
+        533.34,
+        106.45,
+        656.42
+      ],
+      "width": 106.45,
+      "height": 123.08,
+      "area": 13101.97,
+      "source_description": "conf=0.9485"
+    },
+    {
+      "id": "screen_08",
+      "label_source": "manual_from_112135_000001",
+      "points": [
+        [
+          799.46,
+          553.85
+        ],
+        [
+          940.77,
+          553.85
+        ],
+        [
+          940.77,
+          701.15
+        ],
+        [
+          799.46,
+          701.15
+        ]
+      ],
+      "bbox_xyxy": [
+        799.46,
+        553.85,
+        940.77,
+        701.15
+      ],
+      "width": 141.31,
+      "height": 147.3,
+      "area": 20814.98,
+      "source_description": "conf=0.9433"
+    }
+  ],
+  "usage_notes": [
+    "Use these fixed screen ROIs instead of per-frame screen detection for this camera view.",
+    "If camera position, zoom, or office layout changes, recalibrate from a new reference frame.",
+    "Phone/person/pose detection logic should remain dynamic; only screen locations are fixed here."
+  ]
+}

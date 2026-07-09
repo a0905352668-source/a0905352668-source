@@ -1,0 +1,68 @@
+{
+  "version": "3.2.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          2055.1401869158876,
+          670.9345794392524
+        ],
+        [
+          2190.6542056074763,
+          649.4392523364486
+        ],
+        [
+          2206.542056074766,
+          780.2803738317757
+        ],
+        [
+          2075.700934579439,
+          792.4299065420561
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "screen",
+      "score": null,
+      "points": [
+        [
+          2310.2803738317757,
+          495.2336448598131
+        ],
+        [
+          2312.1495327102803,
+          546.6355140186917
+        ],
+        [
+          2379.4392523364486,
+          545.7009345794393
+        ],
+        [
+          2377.5700934579436,
+          501.7757009345795
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "polygon",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "zoulang_middle_frame.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560
+}

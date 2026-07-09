@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "camera_id": "camera_mechanical_01",
+  "camera_source_name": "20260629-机械1",
+  "description": "Fixed screen ROIs calibrated from 20260629-机械1.mp4, frame 0.",
+  "reference_image": "20260629-机械1_frame000000.jpg",
+  "reference_json": "",
+  "image_width": 2560,
+  "image_height": 1440,
+  "coordinate_system": "pixel_xy_origin_top_left_reference_resolution",
+  "screen_count": 11,
+  "created_at": "2026-06-29T16:29:58",
+  "screens": [
+    {
+      "id": "screen_01",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          960.0,
+          770.0
+        ],
+        [
+          1198.0,
+          770.0
+        ],
+        [
+          1198.0,
+          1011.0
+        ],
+        [
+          960.0,
+          1011.0
+        ]
+      ],
+      "bbox_xyxy": [
+        960.0,
+        770.0,
+        1198.0,
+        1011.0
+      ],
+      "width": 238.0,
+      "height": 241.0,
+      "area": 57358.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_02",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          2278.0,
+          746.0
+        ],
+        [
+          2467.0,
+          746.0
+        ],
+        [
+          2467.0,
+          888.0
+        ],
+        [
+          2278.0,
+          888.0
+        ]
+      ],
+      "bbox_xyxy": [
+        2278.0,
+        746.0,
+        2467.0,
+        888.0
+      ],
+      "width": 189.0,
+      "height": 142.0,
+      "area": 26838.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_03",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          2467.0,
+          699.0
+        ],
+        [
+          2554.0,
+          699.0
+        ],
+        [
+          2554.0,
+          834.0
+        ],
+        [
+          2467.0,
+          834.0
+        ]
+      ],
+      "bbox_xyxy": [
+        2467.0,
+        699.0,
+        2554.0,
+        834.0
+      ],
+      "width": 87.0,
+      "height": 135.0,
+      "area": 11745.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_04",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          2106.0,
+          824.0
+        ],
+        [
+          2245.0,
+          824.0
+        ],
+        [
+          2245.0,
+          920.0
+        ],
+        [
+          2106.0,
+          920.0
+        ]
+      ],
+      "bbox_xyxy": [
+        2106.0,
+        824.0,
+        2245.0,
+        920.0
+      ],
+      "width": 139.0,
+      "height": 96.0,
+      "area": 13344.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_05",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          2390.0,
+          648.0
+        ],
+        [
+          2474.0,
+          648.0
+        ],
+        [
+          2474.0,
+          739.0
+        ],
+        [
+          2390.0,
+          739.0
+        ]
+      ],
+      "bbox_xyxy": [
+        2390.0,
+        648.0,
+        2474.0,
+        739.0
+      ],
+      "width": 84.0,
+      "height": 91.0,
+      "area": 7644.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_06",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          1248.0,
+          358.0
+        ],
+        [
+          1344.0,
+          358.0
+        ],
+        [
+          1344.0,
+          432.0
+        ],
+        [
+          1248.0,
+          432.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1248.0,
+        358.0,
+        1344.0,
+        432.0
+      ],
+      "width": 96.0,
+      "height": 74.0,
+      "area": 7104.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_07",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          1234.0,
+          402.0
+        ],
+        [
+          1293.0,
+          402.0
+        ],
+        [
+          1293.0,
+          496.0
+        ],
+        [
+          1234.0,
+          496.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1234.0,
+        402.0,
+        1293.0,
+        496.0
+      ],
+      "width": 59.0,
+      "height": 94.0,
+      "area": 5546.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_08",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          1061.0,
+          346.0
+        ],
+        [
+          1190.0,
+          346.0
+        ],
+        [
+          1190.0,
+          456.0
+        ],
+        [
+          1061.0,
+          456.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1061.0,
+        346.0,
+        1190.0,
+        456.0
+      ],
+      "width": 129.0,
+      "height": 110.0,
+      "area": 14190.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_09",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          456.0,
+          459.0
+        ],
+        [
+          552.0,
+          459.0
+        ],
+        [
+          552.0,
+          525.0
+        ],
+        [
+          456.0,
+          525.0
+        ]
+      ],
+      "bbox_xyxy": [
+        456.0,
+        459.0,
+        552.0,
+        525.0
+      ],
+      "width": 96.0,
+      "height": 66.0,
+      "area": 6336.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_10",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          5.0,
+          650.0
+        ],
+        [
+          91.0,
+          650.0
+        ],
+        [
+          91.0,
+          752.0
+        ],
+        [
+          5.0,
+          752.0
+        ]
+      ],
+      "bbox_xyxy": [
+        5.0,
+        650.0,
+        91.0,
+        752.0
+      ],
+      "width": 86.0,
+      "height": 102.0,
+      "area": 8772.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_11",
+      "label_source": "manual_calibration_camera_mechanical_01",
+      "points": [
+        [
+          1814.0,
+          394.0
+        ],
+        [
+          1970.0,
+          394.0
+        ],
+        [
+          1970.0,
+          491.0
+        ],
+        [
+          1814.0,
+          491.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1814.0,
+        394.0,
+        1970.0,
+        491.0
+      ],
+      "width": 156.0,
+      "height": 97.0,
+      "area": 15132.0,
+      "source_description": ""
+    }
+  ]
+}

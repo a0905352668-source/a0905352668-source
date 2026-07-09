@@ -1,0 +1,928 @@
+{
+  "version": "2.1",
+  "camera_id": "camera_mechanical_02",
+  "frame_size": [
+    2560,
+    1440
+  ],
+  "description": "Recalibrated from LabelMe file jixie2_middle_frame.json on 2026-07-06. Empty screens means this view has no fixed monitor target.",
+  "screens": [
+    {
+      "screen_id": "screen_01",
+      "screen_poly": [
+        [
+          469.27,
+          438.49
+        ],
+        [
+          475.0,
+          520.78
+        ],
+        [
+          573.96,
+          497.86
+        ],
+        [
+          570.83,
+          418.7
+        ]
+      ],
+      "near_zone": [
+        [
+          343.64,
+          326.83
+        ],
+        [
+          699.59,
+          326.83
+        ],
+        [
+          699.59,
+          612.65
+        ],
+        [
+          343.64,
+          612.65
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              401.22,
+              362.56
+            ],
+            [
+              642.01,
+              362.56
+            ],
+            [
+              642.01,
+              576.92
+            ],
+            [
+              401.22,
+              576.92
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              401.22,
+              394.71
+            ],
+            [
+              533.65,
+              394.71
+            ],
+            [
+              533.65,
+              566.2
+            ],
+            [
+              401.22,
+              566.2
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              509.58,
+              394.71
+            ],
+            [
+              642.01,
+              394.71
+            ],
+            [
+              642.01,
+              566.2
+            ],
+            [
+              509.58,
+              566.2
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_02",
+      "screen_poly": [
+        [
+          781.25,
+          275.99
+        ],
+        [
+          782.29,
+          321.82
+        ],
+        [
+          858.33,
+          316.61
+        ],
+        [
+          857.29,
+          266.09
+        ]
+      ],
+      "near_zone": [
+        [
+          688.75,
+          215.93
+        ],
+        [
+          950.83,
+          215.93
+        ],
+        [
+          950.83,
+          371.98
+        ],
+        [
+          688.75,
+          371.98
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              731.15,
+              235.44
+            ],
+            [
+              908.43,
+              235.44
+            ],
+            [
+              908.43,
+              352.47
+            ],
+            [
+              731.15,
+              352.47
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              731.15,
+              252.99
+            ],
+            [
+              828.65,
+              252.99
+            ],
+            [
+              828.65,
+              346.62
+            ],
+            [
+              731.15,
+              346.62
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              810.93,
+              252.99
+            ],
+            [
+              908.43,
+              252.99
+            ],
+            [
+              908.43,
+              346.62
+            ],
+            [
+              810.93,
+              346.62
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_03",
+      "screen_poly": [
+        [
+          1200.52,
+          282.76
+        ],
+        [
+          1196.88,
+          329.64
+        ],
+        [
+          1268.23,
+          337.97
+        ],
+        [
+          1274.48,
+          289.53
+        ]
+      ],
+      "near_zone": [
+        [
+          1103.76,
+          233.07
+        ],
+        [
+          1367.6,
+          233.07
+        ],
+        [
+          1367.6,
+          387.66
+        ],
+        [
+          1103.76,
+          387.66
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              1146.44,
+              252.39
+            ],
+            [
+              1324.92,
+              252.39
+            ],
+            [
+              1324.92,
+              368.34
+            ],
+            [
+              1146.44,
+              368.34
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              1146.44,
+              269.78
+            ],
+            [
+              1244.6,
+              269.78
+            ],
+            [
+              1244.6,
+              362.54
+            ],
+            [
+              1146.44,
+              362.54
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              1226.76,
+              269.78
+            ],
+            [
+              1324.92,
+              269.78
+            ],
+            [
+              1324.92,
+              362.54
+            ],
+            [
+              1226.76,
+              362.54
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_04",
+      "screen_poly": [
+        [
+          1189.58,
+          355.68
+        ],
+        [
+          1188.02,
+          395.78
+        ],
+        [
+          1275.52,
+          395.78
+        ],
+        [
+          1276.56,
+          342.66
+        ]
+      ],
+      "near_zone": [
+        [
+          1081.77,
+          294.85
+        ],
+        [
+          1382.81,
+          294.85
+        ],
+        [
+          1382.81,
+          443.59
+        ],
+        [
+          1081.77,
+          443.59
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              1130.47,
+              313.44
+            ],
+            [
+              1334.11,
+              313.44
+            ],
+            [
+              1334.11,
+              425.0
+            ],
+            [
+              1130.47,
+              425.0
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              1130.47,
+              330.17
+            ],
+            [
+              1242.47,
+              330.17
+            ],
+            [
+              1242.47,
+              419.42
+            ],
+            [
+              1130.47,
+              419.42
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              1222.11,
+              330.17
+            ],
+            [
+              1334.11,
+              330.17
+            ],
+            [
+              1334.11,
+              419.42
+            ],
+            [
+              1222.11,
+              419.42
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_05",
+      "screen_poly": [
+        [
+          1369.79,
+          279.64
+        ],
+        [
+          1363.02,
+          353.59
+        ],
+        [
+          1459.9,
+          367.66
+        ],
+        [
+          1472.4,
+          293.7
+        ]
+      ],
+      "near_zone": [
+        [
+          1231.76,
+          200.42
+        ],
+        [
+          1603.66,
+          200.42
+        ],
+        [
+          1603.66,
+          446.88
+        ],
+        [
+          1231.76,
+          446.88
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              1291.92,
+              231.23
+            ],
+            [
+              1543.5,
+              231.23
+            ],
+            [
+              1543.5,
+              416.07
+            ],
+            [
+              1291.92,
+              416.07
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              1291.92,
+              258.96
+            ],
+            [
+              1430.29,
+              258.96
+            ],
+            [
+              1430.29,
+              406.83
+            ],
+            [
+              1291.92,
+              406.83
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              1405.13,
+              258.96
+            ],
+            [
+              1543.5,
+              258.96
+            ],
+            [
+              1543.5,
+              406.83
+            ],
+            [
+              1405.13,
+              406.83
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_06",
+      "screen_poly": [
+        [
+          1366.15,
+          394.74
+        ],
+        [
+          1353.12,
+          472.34
+        ],
+        [
+          1446.35,
+          458.28
+        ],
+        [
+          1458.85,
+          380.16
+        ]
+      ],
+      "near_zone": [
+        [
+          1226.24,
+          297.2
+        ],
+        [
+          1585.73,
+          297.2
+        ],
+        [
+          1585.73,
+          555.3
+        ],
+        [
+          1226.24,
+          555.3
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              1284.4,
+              329.46
+            ],
+            [
+              1527.57,
+              329.46
+            ],
+            [
+              1527.57,
+              523.04
+            ],
+            [
+              1284.4,
+              523.04
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              1284.4,
+              358.5
+            ],
+            [
+              1418.14,
+              358.5
+            ],
+            [
+              1418.14,
+              513.36
+            ],
+            [
+              1284.4,
+              513.36
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              1393.83,
+              358.5
+            ],
+            [
+              1527.57,
+              358.5
+            ],
+            [
+              1527.57,
+              513.36
+            ],
+            [
+              1393.83,
+              513.36
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    },
+    {
+      "screen_id": "screen_07",
+      "screen_poly": [
+        [
+          2020.0,
+          417.65
+        ],
+        [
+          2010.59,
+          488.82
+        ],
+        [
+          2122.35,
+          518.24
+        ],
+        [
+          2130.59,
+          443.53
+        ]
+      ],
+      "near_zone": [
+        [
+          1866.59,
+          327.12
+        ],
+        [
+          2274.59,
+          327.12
+        ],
+        [
+          2274.59,
+          608.77
+        ],
+        [
+          1866.59,
+          608.77
+        ]
+      ],
+      "danger_zones": [
+        {
+          "name": "front",
+          "polygon": [
+            [
+              1932.59,
+              362.33
+            ],
+            [
+              2208.59,
+              362.33
+            ],
+            [
+              2208.59,
+              573.56
+            ],
+            [
+              1932.59,
+              573.56
+            ]
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "left_side",
+          "polygon": [
+            [
+              1932.59,
+              394.01
+            ],
+            [
+              2084.39,
+              394.01
+            ],
+            [
+              2084.39,
+              563.0
+            ],
+            [
+              1932.59,
+              563.0
+            ]
+          ],
+          "weight": 0.8
+        },
+        {
+          "name": "right_side",
+          "polygon": [
+            [
+              2056.79,
+              394.01
+            ],
+            [
+              2208.59,
+              394.01
+            ],
+            [
+              2208.59,
+              563.0
+            ],
+            [
+              2056.79,
+              563.0
+            ]
+          ],
+          "weight": 0.8
+        }
+      ],
+      "ignore_zones": [],
+      "params": {
+        "enable_dynamic_person_zone": true,
+        "person_expand_x": 0.35,
+        "person_expand_y": 0.2,
+        "near_zone_detect_interval": 10,
+        "phone_valid_conf_person_roi": 0.35,
+        "phone_valid_conf_near_zone": 0.5,
+        "phone_strong_conf": 0.55,
+        "ignore_center_inside": true,
+        "angle_thresh": 90.0,
+        "angle_relaxed_thresh": 110.0,
+        "hand_radius_ratio": 0.18,
+        "hand_radius_min": 40.0,
+        "corridor_width_ratio": 0.35,
+        "corridor_width_min": 80.0,
+        "alert_counter_threshold": 10.0,
+        "person_state_window": 30,
+        "person_state_min_hits": 16,
+        "person_state_risk_threshold": 0.65,
+        "person_state_alarm_risk": 0.9,
+        "occluded_enable": false,
+        "near_screen_override": false
+      }
+    }
+  ]
+}

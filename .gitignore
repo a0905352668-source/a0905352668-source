@@ -1,0 +1,79 @@
+# Track source/config/docs only by default.
+/*
+
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/00_README/
+!/01_algorithms/
+!/02_configs/
+!/07_models/
+
+# Keep model registry but never commit model binaries.
+/07_models/*
+!/07_models/MODEL_REGISTRY.md
+
+# Data, videos, labels, training runs, dashboard outputs.
+/03_raw_videos_and_frames/
+/04_labelme_datasets/
+/05_yolo_datasets/
+/06_training_runs/
+
+# Python caches and virtual environments.
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Native build outputs and compiled tools.
+*.o
+*.so
+*.a
+*.dll
+*.exe
+*.out
+*.engine
+*.plan
+*.onnx
+*.pt
+*.pth
+*.bin
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.npy
+*.npz
+*.csv
+*.log
+
+# Local backups and generated variants.
+*.bak
+*.bak_*
+*.tmp
+*.temp
+*.new
+*.old
+*.event_dashboard_new
+*.new_screen_rule
+*.novideo_candidate
+
+# Known generated C++ executables in tools.
+/01_algorithms/tools/cpp_full_pipeline_bench
+/01_algorithms/tools/cpp_full_pipeline_bench_gpu*
+/01_algorithms/tools/cpp_video_decode_bench
+
+# Generated manifests, process files, tabular exports.
+*.pid
+*.tsv
+00_README/dir_size_summary.txt
+00_README/file_manifest*.txt

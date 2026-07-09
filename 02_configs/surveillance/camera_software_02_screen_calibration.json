@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "camera_id": "camera_software_02",
+  "camera_source_name": "20260629-软件2",
+  "description": "Fixed screen ROIs calibrated from 20260629-软件2.mp4, frame 0.",
+  "reference_image": "20260629-软件2_frame000000.jpg",
+  "reference_json": "",
+  "image_width": 2560,
+  "image_height": 1440,
+  "coordinate_system": "pixel_xy_origin_top_left_reference_resolution",
+  "screen_count": 10,
+  "created_at": "2026-06-30T11:43:08",
+  "screens": [
+    {
+      "id": "screen_01",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1043.0,
+          714.0
+        ],
+        [
+          1256.0,
+          714.0
+        ],
+        [
+          1256.0,
+          934.0
+        ],
+        [
+          1043.0,
+          934.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1043.0,
+        714.0,
+        1256.0,
+        934.0
+      ],
+      "width": 213.0,
+      "height": 220.0,
+      "area": 46860.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_02",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1141.0,
+          592.0
+        ],
+        [
+          1309.0,
+          592.0
+        ],
+        [
+          1309.0,
+          702.0
+        ],
+        [
+          1141.0,
+          702.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1141.0,
+        592.0,
+        1309.0,
+        702.0
+      ],
+      "width": 168.0,
+      "height": 110.0,
+      "area": 18480.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_03",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          0.0,
+          707.0
+        ],
+        [
+          154.0,
+          707.0
+        ],
+        [
+          154.0,
+          845.0
+        ],
+        [
+          0.0,
+          845.0
+        ]
+      ],
+      "bbox_xyxy": [
+        0.0,
+        707.0,
+        154.0,
+        845.0
+      ],
+      "width": 154.0,
+      "height": 138.0,
+      "area": 21252.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_04",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          440.0,
+          413.0
+        ],
+        [
+          637.0,
+          413.0
+        ],
+        [
+          637.0,
+          522.0
+        ],
+        [
+          440.0,
+          522.0
+        ]
+      ],
+      "bbox_xyxy": [
+        440.0,
+        413.0,
+        637.0,
+        522.0
+      ],
+      "width": 197.0,
+      "height": 109.0,
+      "area": 21473.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_05",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          866.0,
+          387.0
+        ],
+        [
+          997.0,
+          387.0
+        ],
+        [
+          997.0,
+          475.0
+        ],
+        [
+          866.0,
+          475.0
+        ]
+      ],
+      "bbox_xyxy": [
+        866.0,
+        387.0,
+        997.0,
+        475.0
+      ],
+      "width": 131.0,
+      "height": 88.0,
+      "area": 11528.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_06",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1219.0,
+          322.0
+        ],
+        [
+          1302.0,
+          322.0
+        ],
+        [
+          1302.0,
+          374.0
+        ],
+        [
+          1219.0,
+          374.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1219.0,
+        322.0,
+        1302.0,
+        374.0
+      ],
+      "width": 83.0,
+      "height": 52.0,
+      "area": 4316.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_07",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1146.0,
+          390.0
+        ],
+        [
+          1238.0,
+          390.0
+        ],
+        [
+          1238.0,
+          454.0
+        ],
+        [
+          1146.0,
+          454.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1146.0,
+        390.0,
+        1238.0,
+        454.0
+      ],
+      "width": 92.0,
+      "height": 64.0,
+      "area": 5888.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_08",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1410.0,
+          384.0
+        ],
+        [
+          1536.0,
+          384.0
+        ],
+        [
+          1536.0,
+          472.0
+        ],
+        [
+          1410.0,
+          472.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1410.0,
+        384.0,
+        1536.0,
+        472.0
+      ],
+      "width": 126.0,
+      "height": 88.0,
+      "area": 11088.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_09",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1934.0,
+          387.0
+        ],
+        [
+          2078.0,
+          387.0
+        ],
+        [
+          2078.0,
+          478.0
+        ],
+        [
+          1934.0,
+          478.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1934.0,
+        387.0,
+        2078.0,
+        478.0
+      ],
+      "width": 144.0,
+      "height": 91.0,
+      "area": 13104.0,
+      "source_description": ""
+    },
+    {
+      "id": "screen_10",
+      "label_source": "manual_calibration_camera_software_02",
+      "points": [
+        [
+          1373.0,
+          637.0
+        ],
+        [
+          1546.0,
+          637.0
+        ],
+        [
+          1546.0,
+          712.0
+        ],
+        [
+          1373.0,
+          712.0
+        ]
+      ],
+      "bbox_xyxy": [
+        1373.0,
+        637.0,
+        1546.0,
+        712.0
+      ],
+      "width": 173.0,
+      "height": 75.0,
+      "area": 12975.0,
+      "source_description": ""
+    }
+  ]
+}

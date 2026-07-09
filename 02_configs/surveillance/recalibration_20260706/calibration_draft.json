@@ -1,0 +1,157 @@
+{
+  "updated_at": "2026-07-06 10:03:51",
+  "views": {
+    "dianqi1": {
+      "screens": [],
+      "active_screen": 0,
+      "no_screen": true,
+      "saved": true
+    },
+    "dianqi2": {
+      "no_screen": false,
+      "saved": false,
+      "screens": [
+        {
+          "screen_id": "screen_01",
+          "points": [
+            [
+              1256.79,
+              292.37
+            ],
+            [
+              1281.04,
+              292.37
+            ],
+            [
+              1281.04,
+              343.16
+            ],
+            [
+              1256.79,
+              343.16
+            ]
+          ]
+        }
+      ],
+      "active_screen": 0
+    },
+    "jixie1": {
+      "no_screen": false,
+      "saved": false,
+      "screens": [
+        {
+          "screen_id": "screen_01",
+          "points": [
+            [
+              960.0,
+              770.0
+            ],
+            [
+              1198.0,
+              770.0
+            ],
+            [
+              1198.0,
+              1011.0
+            ],
+            [
+              960.0,
+              1011.0
+            ]
+          ]
+        }
+      ],
+      "active_screen": 0
+    },
+    "jixie2": {
+      "no_screen": false,
+      "saved": false,
+      "screens": [
+        {
+          "screen_id": "screen_01",
+          "points": [
+            [
+              1349.0,
+              374.0
+            ],
+            [
+              1459.0,
+              374.0
+            ],
+            [
+              1459.0,
+              469.0
+            ],
+            [
+              1349.0,
+              469.0
+            ]
+          ]
+        }
+      ],
+      "active_screen": 0
+    },
+    "ruanjian1": {
+      "no_screen": false,
+      "saved": false,
+      "screens": [
+        {
+          "screen_id": "screen_01",
+          "points": [
+            [
+              1330.0,
+              837.0
+            ],
+            [
+              1517.0,
+              837.0
+            ],
+            [
+              1517.0,
+              1178.0
+            ],
+            [
+              1330.0,
+              1178.0
+            ]
+          ]
+        }
+      ],
+      "active_screen": 0
+    },
+    "ruanjian2": {
+      "no_screen": false,
+      "saved": false,
+      "screens": [
+        {
+          "screen_id": "screen_01",
+          "points": [
+            [
+              1043.0,
+              714.0
+            ],
+            [
+              1256.0,
+              714.0
+            ],
+            [
+              1256.0,
+              934.0
+            ],
+            [
+              1043.0,
+              934.0
+            ]
+          ]
+        }
+      ],
+      "active_screen": 0
+    },
+    "zoulang": {
+      "no_screen": true,
+      "saved": false,
+      "screens": [],
+      "active_screen": 0
+    }
+  }
+}

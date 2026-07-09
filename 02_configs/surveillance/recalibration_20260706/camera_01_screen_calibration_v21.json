@@ -1,0 +1,10 @@
+{
+  "version": "2.1",
+  "camera_id": "camera_01",
+  "frame_size": [
+    2560,
+    1440
+  ],
+  "description": "Recalibrated from dianqi1 middle frame on 2026-07-06. Empty screens means this view has no fixed monitor target.",
+  "screens": []
+}
