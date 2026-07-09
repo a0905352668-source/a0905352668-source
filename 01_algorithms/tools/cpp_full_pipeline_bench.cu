@@ -284,6 +284,16 @@ struct ScreenParams {
     int person_state_min_hits = 16;
     int handheld_suspect_min_hits = 12;
     float person_state_risk_threshold = 0.65f;
+    bool enable_static_phone_suppression = true;
+    float static_phone_window_seconds = 1.5f;
+    float static_phone_max_disp_ratio = 0.03f;
+    float static_phone_risk_multiplier = 0.2f;
+    float static_phone_min_abs_disp_px = 6.0f;
+    float static_phone_min_bbox_iou = 0.45f;
+    float static_phone_max_bbox_size_change_ratio = 0.35f;
+    float static_phone_lower_person_start_ratio = 0.55f;
+    float static_phone_wrist_follow_min_motion_px = 10.0f;
+    float static_phone_wrist_follow_cosine = 0.65f;
 };
 
 struct ScreenConfig {
@@ -292,6 +302,7 @@ struct ScreenConfig {
     std::vector<cv::Point2f> near_zone;
     std::vector<Zone> danger_zones;
     std::vector<Zone> ignore_zones;
+    std::vector<Zone> desk_static_zones;
     ScreenParams params;
 };
 
@@ -315,10 +326,39 @@ struct CandidateEval {
     float risk_score = 0.0f;
     float best_angle = 180.0f;
     bool best_ray_hit = false;
+    bool phone_static = false;
+    float phone_static_duration = 0.0f;
+    float phone_motion_px = 0.0f;
+    bool phone_in_desk_zone = false;
+    bool static_suppressed = false;
+    float static_risk_multiplier = 1.0f;
+    bool phone_follow_wrist = false;
+    bool static_suppression_enabled = true;
+    float static_window_seconds = 1.5f;
+    float static_max_disp_ratio = 0.03f;
+    float static_config_risk_multiplier = 0.2f;
+    float static_min_abs_disp_px = 6.0f;
+    float static_min_bbox_iou = 0.45f;
+    float static_max_bbox_size_change_ratio = 0.35f;
+    float static_lower_person_start_ratio = 0.55f;
+    float static_wrist_follow_min_motion_px = 10.0f;
+    float static_wrist_follow_cosine = 0.65f;
     bool person_alarm = false;
     int person_window_hits = 0;
     std::string candidate_reason;
     bool accepted() const { return reject_reason.empty(); }
+};
+
+struct StaticPhoneObs {
+    int frame_id = 0;
+    float timestamp = 0.0f;
+    cv::Point2f center;
+    Rect box;
+    Rect person_box;
+    bool has_wrist = false;
+    cv::Point2f wrist;
+    float risk_score = 0.0f;
+    bool candidate = false;
 };
 
 struct PersonTrackState {
@@ -328,11 +368,13 @@ struct PersonTrackState {
     std::deque<float> risk_history;
     std::deque<int> candidate_history;
     std::deque<int> handheld_history;
+    std::deque<StaticPhoneObs> static_phone_history;
     std::string state = "S0_CLEAR";
     int stable_count = 0;
     int window_hits = 0;
     int handheld_phone_hits = 0;
     int handheld_phone_stable_count = 0;
+    int static_phone_suppressed_hits = 0;
     bool alarm_triggered = false;
     int last_seen = 0;
     Rect last_bbox;
@@ -364,6 +406,9 @@ struct StreamState {
     long long phones_raw = 0;
     long long phones_nms = 0;
     long long accepted_candidates = 0;
+    long long static_phone_suppressed_frames = 0;
+    long long static_phone_suppressed_candidates = 0;
+    long long desk_zone_phone_frames = 0;
     long long alarm_frames = 0;
     std::vector<ScreenConfig> screens;
     std::map<int, PersonTrackState> person_states;
@@ -727,6 +772,22 @@ static int view_order(const std::string& p) {
 static std::vector<std::string> find_videos_by_rank_from_end(const std::string& root, int rank_from_end) {
     std::vector<std::string> out;
     rank_from_end = std::max(1, rank_from_end);
+    std::vector<fs::path> direct_videos;
+    for (const auto& ent : fs::directory_iterator(root)) {
+        if (!ent.is_regular_file()) continue;
+        std::string ext = lower(ent.path().extension().string());
+        if (ext != ".mp4" && ext != ".avi" && ext != ".mkv" && ext != ".mov") continue;
+        direct_videos.push_back(ent.path());
+    }
+    if (!direct_videos.empty()) {
+        std::sort(direct_videos.begin(), direct_videos.end(), [](const fs::path& a, const fs::path& b) {
+            int oa = view_order(a.string()), ob = view_order(b.string());
+            if (oa != ob) return oa < ob;
+            return a.filename() < b.filename();
+        });
+        for (const auto& p : direct_videos) out.push_back(p.string());
+        return out;
+    }
     for (const auto& ent : fs::directory_iterator(root)) {
         if (!ent.is_directory()) continue;
         std::vector<fs::path> candidates;
@@ -788,6 +849,51 @@ static std::vector<cv::Point2f> parse_polygon(const json& arr, float sx, float s
     return poly;
 }
 
+static bool looks_like_polygon_points(const json& arr) {
+    return arr.is_array() && !arr.empty()
+           && arr[0].is_array() && arr[0].size() >= 2
+           && arr[0][0].is_number() && arr[0][1].is_number();
+}
+
+static void append_zone_from_json(std::vector<Zone>& zones, const json& value,
+                                  const std::string& default_name, float sx, float sy) {
+    Zone z;
+    z.name = default_name;
+    z.weight = 1.0f;
+    if (value.is_object()) {
+        z.name = value.value("name", default_name);
+        z.weight = value.value("weight", 1.0f);
+        if (value.contains("polygon")) {
+            z.polygon = parse_polygon(value["polygon"], sx, sy);
+        } else if (value.contains("points")) {
+            z.polygon = parse_polygon(value["points"], sx, sy);
+        }
+    } else if (looks_like_polygon_points(value)) {
+        z.polygon = parse_polygon(value, sx, sy);
+    }
+    if (!z.polygon.empty()) zones.push_back(std::move(z));
+}
+
+static std::vector<Zone> parse_zone_field(const json& data, const char* plural_key, const char* singular_key,
+                                          const std::string& default_name, float sx, float sy) {
+    std::vector<Zone> zones;
+    if (data.contains(plural_key)) {
+        const auto& v = data[plural_key];
+        if (looks_like_polygon_points(v) || v.is_object()) {
+            append_zone_from_json(zones, v, default_name, sx, sy);
+        } else if (v.is_array()) {
+            int idx = 1;
+            for (const auto& item : v) {
+                append_zone_from_json(zones, item, default_name + "_" + std::to_string(idx++), sx, sy);
+            }
+        }
+    }
+    if (data.contains(singular_key)) {
+        append_zone_from_json(zones, data[singular_key], default_name, sx, sy);
+    }
+    return zones;
+}
+
 static void update_params_from_json(ScreenParams& p, const json& params) {
     if (!params.is_object()) return;
     auto getf = [&](const char* key, float& dst) {
@@ -795,6 +901,9 @@ static void update_params_from_json(ScreenParams& p, const json& params) {
     };
     auto geti = [&](const char* key, int& dst) {
         if (params.contains(key) && params[key].is_number_integer()) dst = params[key].get<int>();
+    };
+    auto getb = [&](const char* key, bool& dst) {
+        if (params.contains(key) && params[key].is_boolean()) dst = params[key].get<bool>();
     };
     getf("person_expand_x", p.person_expand_x);
     getf("person_expand_y", p.person_expand_y);
@@ -813,6 +922,19 @@ static void update_params_from_json(ScreenParams& p, const json& params) {
     geti("person_state_min_hits", p.person_state_min_hits);
     geti("handheld_suspect_min_hits", p.handheld_suspect_min_hits);
     getf("person_state_risk_threshold", p.person_state_risk_threshold);
+    getb("enable_static_phone_suppression", p.enable_static_phone_suppression);
+    getf("static_phone_window_seconds", p.static_phone_window_seconds);
+    getf("static_window_seconds", p.static_phone_window_seconds);
+    getf("static_phone_max_disp_ratio", p.static_phone_max_disp_ratio);
+    getf("static_max_disp_ratio", p.static_phone_max_disp_ratio);
+    getf("static_phone_risk_multiplier", p.static_phone_risk_multiplier);
+    getf("static_risk_multiplier", p.static_phone_risk_multiplier);
+    getf("static_phone_min_abs_disp_px", p.static_phone_min_abs_disp_px);
+    getf("static_phone_min_bbox_iou", p.static_phone_min_bbox_iou);
+    getf("static_phone_max_bbox_size_change_ratio", p.static_phone_max_bbox_size_change_ratio);
+    getf("static_phone_lower_person_start_ratio", p.static_phone_lower_person_start_ratio);
+    getf("static_phone_wrist_follow_min_motion_px", p.static_phone_wrist_follow_min_motion_px);
+    getf("static_phone_wrist_follow_cosine", p.static_phone_wrist_follow_cosine);
 }
 
 static std::vector<ScreenConfig> load_calibration(const std::string& path, int width, int height) {
@@ -832,10 +954,16 @@ static std::vector<ScreenConfig> load_calibration(const std::string& path, int w
     const float sx = width / std::max(1.0f, ref_w);
     const float sy = height / std::max(1.0f, ref_h);
     std::vector<ScreenConfig> screens;
+    ScreenParams base_params;
+    update_params_from_json(base_params, data.value("params", json::object()));
+    const std::vector<Zone> global_desk_zones =
+        parse_zone_field(data, "desk_static_zones", "desk_static_zone", "desk_static_zone", sx, sy);
     if (!data.contains("screens") || !data["screens"].is_array()) return screens;
     int idx = 1;
     for (const auto& item : data["screens"]) {
         ScreenConfig sc;
+        sc.params = base_params;
+        sc.desk_static_zones = global_desk_zones;
         sc.screen_id = item.value("screen_id", item.value("id", "screen_" + std::to_string(idx)));
         update_params_from_json(sc.params, item.value("params", json::object()));
         if (item.contains("screen_poly")) {
@@ -863,6 +991,8 @@ static std::vector<ScreenConfig> load_calibration(const std::string& path, int w
             iz.polygon = parse_polygon(z.value("polygon", json::array()), sx, sy);
             if (!iz.polygon.empty()) sc.ignore_zones.push_back(std::move(iz));
         }
+        auto local_desk_zones = parse_zone_field(item, "desk_static_zones", "desk_static_zone", "desk_static_zone", sx, sy);
+        sc.desk_static_zones.insert(sc.desk_static_zones.end(), local_desk_zones.begin(), local_desk_zones.end());
         if (sc.near_zone.empty() && !sc.screen_poly.empty()) {
             const Rect sb = bbox_from_polygon(sc.screen_poly);
             const Rect near = clamp_rect(Rect{sb.x1 - sb.w() * 1.2f, sb.y1 - sb.h() * 0.9f,
@@ -1098,6 +1228,30 @@ static cv::Point2f phone_center(const Det& phone) {
     return cv::Point2f(rect_cx(phone.box), rect_cy(phone.box));
 }
 
+static bool nearest_wrist_point(const Det& phone, const Det& person, float kp_thr, cv::Point2f& wrist_out) {
+    const cv::Point2f pc = phone_center(phone);
+    bool found = false;
+    float best = std::numeric_limits<float>::max();
+    for (int idx : {9, 10}) {
+        if (!has_kpt(person, idx, kp_thr)) continue;
+        const cv::Point2f w = kpt_point(person, idx);
+        const float d = point_dist(pc, w);
+        if (d < best) {
+            best = d;
+            wrist_out = w;
+            found = true;
+        }
+    }
+    return found;
+}
+
+static bool point_in_zones(const cv::Point2f& p, const std::vector<Zone>& zones) {
+    for (const auto& z : zones) {
+        if (point_in_polygon(p, z.polygon)) return true;
+    }
+    return false;
+}
+
 static cv::Point2f person_anchor(const Det& person, float kp_thr) {
     if (has_kpt(person, 5, kp_thr) && has_kpt(person, 6, kp_thr)) {
         const auto l = kpt_point(person, 5);
@@ -1253,7 +1407,8 @@ static float pose_support_score(const Det& phone, const Det& person, float aim, 
 }
 
 static float risk_score(float phone_score, float hand_score, float screen_score, float pose_score, float temporal_score) {
-    return clampf(0.30f * phone_score + 0.20f * hand_score + 0.20f * screen_score + 0.15f * pose_score + 0.15f * temporal_score, 0.0f, 1.0f);
+    return clampf(0.35f * phone_score + 0.25f * screen_score + 0.20f * hand_score
+                  + 0.10f * pose_score + 0.10f * temporal_score, 0.0f, 1.0f);
 }
 
 static std::string candidate_level(float risk) {
@@ -1265,6 +1420,7 @@ static std::string candidate_level(float risk) {
 
 static bool is_handheld_phone_suspect_candidate(const CandidateEval& ev) {
     if (ev.track_id < 0 || ev.person_index < 0) return false;
+    if (ev.static_suppressed || ev.phone_static) return false;
     if (ev.reject_reason == "ignore_zone" || ev.reject_reason == "low_conf_for_source") return false;
     if (ev.phone.conf < 0.50f || ev.phone_score <= 0.0f) return false;
     const bool person_context = ev.person_match_score >= 0.28f || ev.phone_hand_score >= 0.50f;
@@ -1308,6 +1464,113 @@ static void push_limited(std::deque<float>& q, float v, int max_len) {
 static void push_limited(std::deque<Rect>& q, const Rect& v, int max_len) {
     q.push_back(v);
     while (static_cast<int>(q.size()) > max_len) q.pop_front();
+}
+
+static void push_limited(std::deque<StaticPhoneObs>& q, const StaticPhoneObs& v, int max_len) {
+    q.push_back(v);
+    while (static_cast<int>(q.size()) > max_len) q.pop_front();
+}
+
+static bool phone_in_lower_person_area(const CandidateEval& ev, const Det& person) {
+    const cv::Point2f c = phone_center(ev.phone);
+    const float margin_x = person.box.w() * 0.18f;
+    const float lower_y = person.box.y1 + person.box.h() * clampf(ev.static_lower_person_start_ratio, 0.10f, 0.95f);
+    return c.y >= lower_y && c.x >= person.box.x1 - margin_x && c.x <= person.box.x2 + margin_x;
+}
+
+static float rect_size_change_ratio(const Rect& a, const Rect& b) {
+    const float wa = std::max(1.0f, a.w());
+    const float ha = std::max(1.0f, a.h());
+    const float wb = std::max(1.0f, b.w());
+    const float hb = std::max(1.0f, b.h());
+    const float wr = std::abs(wa - wb) / std::max(wa, wb);
+    const float hr = std::abs(ha - hb) / std::max(ha, hb);
+    return std::max(wr, hr);
+}
+
+static void apply_static_phone_suppression(CandidateEval& ev, PersonTrackState& state,
+                                           const Det& person, int frame_id, float infer_fps) {
+    if (!ev.static_suppression_enabled || ev.track_id < 0 || ev.person_index < 0 || ev.phone_score <= 0.0f) return;
+    const float fps = std::max(1.0f, infer_fps);
+    StaticPhoneObs obs;
+    obs.frame_id = frame_id;
+    obs.timestamp = frame_id / fps;
+    obs.center = phone_center(ev.phone);
+    obs.box = ev.phone.box;
+    obs.person_box = person.box;
+    obs.risk_score = ev.risk_score;
+    obs.candidate = ev.accepted();
+    obs.has_wrist = nearest_wrist_point(ev.phone, person, 0.0f, obs.wrist);
+    const int max_history = std::max(8, static_cast<int>(std::ceil(std::max(2.0f, ev.static_window_seconds + 1.0f) * fps)) + 2);
+    push_limited(state.static_phone_history, obs, max_history);
+
+    std::vector<StaticPhoneObs> recent;
+    const float window = std::max(0.1f, ev.static_window_seconds);
+    const float cutoff = obs.timestamp - std::max(window, ev.static_window_seconds);
+    for (const auto& h : state.static_phone_history) {
+        if (h.timestamp >= cutoff) recent.push_back(h);
+    }
+    if (recent.size() < 2) return;
+
+    float min_x = recent[0].center.x, max_x = recent[0].center.x;
+    float min_y = recent[0].center.y, max_y = recent[0].center.y;
+    float min_iou = 1.0f;
+    float max_size_change = 0.0f;
+    float max_gap = 0.0f;
+    for (size_t i = 0; i < recent.size(); ++i) {
+        min_x = std::min(min_x, recent[i].center.x);
+        max_x = std::max(max_x, recent[i].center.x);
+        min_y = std::min(min_y, recent[i].center.y);
+        max_y = std::max(max_y, recent[i].center.y);
+        min_iou = std::min(min_iou, iou(obs.box, recent[i].box));
+        max_size_change = std::max(max_size_change, rect_size_change_ratio(obs.box, recent[i].box));
+        if (i > 0) max_gap = std::max(max_gap, recent[i].timestamp - recent[i - 1].timestamp);
+    }
+    const float duration = recent.back().timestamp - recent.front().timestamp;
+    const float motion = std::sqrt((max_x - min_x) * (max_x - min_x) + (max_y - min_y) * (max_y - min_y));
+    const float max_disp = std::max(ev.static_min_abs_disp_px, ev.static_max_disp_ratio * std::max(1.0f, person.box.h()));
+    const bool continuous = duration >= window && max_gap <= std::max(0.35f, window * 0.60f);
+    const bool center_stable = motion <= max_disp;
+    const bool bbox_stable = min_iou >= ev.static_min_bbox_iou
+                             && max_size_change <= ev.static_max_bbox_size_change_ratio;
+    const bool in_static_area = ev.phone_in_desk_zone || phone_in_lower_person_area(ev, person);
+
+    bool follows_wrist = false;
+    if (recent.front().has_wrist && recent.back().has_wrist) {
+        const cv::Point2f phone_vec(recent.back().center.x - recent.front().center.x,
+                                    recent.back().center.y - recent.front().center.y);
+        const cv::Point2f wrist_vec(recent.back().wrist.x - recent.front().wrist.x,
+                                    recent.back().wrist.y - recent.front().wrist.y);
+        const float phone_motion = std::sqrt(phone_vec.x * phone_vec.x + phone_vec.y * phone_vec.y);
+        const float wrist_motion = std::sqrt(wrist_vec.x * wrist_vec.x + wrist_vec.y * wrist_vec.y);
+        const float denom = std::max(1e-6f, phone_motion * wrist_motion);
+        const float cosine = (phone_vec.x * wrist_vec.x + phone_vec.y * wrist_vec.y) / denom;
+        const float wrist_min = std::max(ev.static_wrist_follow_min_motion_px, person.box.h() * 0.04f);
+        follows_wrist = wrist_motion >= wrist_min && phone_motion >= ev.static_min_abs_disp_px
+                        && phone_motion >= wrist_motion * 0.35f
+                        && cosine >= ev.static_wrist_follow_cosine;
+    }
+
+    ev.phone_static_duration = duration;
+    ev.phone_motion_px = motion;
+    ev.phone_follow_wrist = follows_wrist;
+    ev.phone_static = continuous && center_stable && bbox_stable && in_static_area && !follows_wrist;
+    if (!ev.phone_static) return;
+
+    ev.static_suppressed = true;
+    ev.static_risk_multiplier = clampf(ev.static_config_risk_multiplier, 0.0f, 1.0f);
+    ev.risk_score = clampf(ev.risk_score * ev.static_risk_multiplier, 0.0f, 1.0f);
+    ev.level = candidate_level(ev.risk_score);
+    ev.reject_reason = "static_phone_suppressed";
+    std::ostringstream oss;
+    oss << "STATIC_PHONE_SUPPRESSED"
+        << "|duration=" << std::fixed << std::setprecision(2) << ev.phone_static_duration
+        << "|motion=" << ev.phone_motion_px
+        << "|desk=" << (ev.phone_in_desk_zone ? 1 : 0)
+        << "|follow_wrist=" << (ev.phone_follow_wrist ? 1 : 0)
+        << "|risk=" << ev.risk_score;
+    ev.candidate_reason = oss.str();
+    state.static_phone_suppressed_hits += 1;
 }
 
 static constexpr int SUSPECT_HOLD_FRAMES = 20;
@@ -1379,11 +1642,11 @@ static void prune_person_tracks(std::map<int, PersonTrackState>& states, int fra
 }
 
 static void update_eval_risk(CandidateEval& ev, float risk_threshold) {
-    (void)risk_threshold;
+    const float candidate_threshold = std::max(0.65f, risk_threshold);
     ev.risk_score = risk_score(ev.phone_score, ev.phone_hand_score, ev.screen_relation_score, ev.pose_score, ev.temporal_score);
     ev.level = candidate_level(ev.risk_score);
     if (ev.person_index >= 0 && (ev.reject_reason.empty() || ev.reject_reason == "low_risk_score")) {
-        if (ev.risk_score >= 0.40f && ev.static_zone_score > 0.0f && ev.person_match_score >= 0.35f) ev.reject_reason.clear();
+        if (ev.risk_score > candidate_threshold && ev.static_zone_score > 0.0f && ev.person_match_score >= 0.35f) ev.reject_reason.clear();
         else ev.reject_reason = "low_risk_score";
     }
     std::ostringstream oss;
@@ -1400,10 +1663,21 @@ static void update_eval_risk(CandidateEval& ev, float risk_threshold) {
 }
 
 static CandidateEval evaluate_phone(const Det& phone, const ScreenConfig& screen, const std::vector<Det>& people,
-                                    const std::map<int, PersonTrackState>& states, int width, int height, float kp_thr) {
+                                     const std::map<int, PersonTrackState>& states, int width, int height, float kp_thr) {
     CandidateEval ev;
     ev.phone = phone;
     ev.screen_id = screen.screen_id;
+    ev.static_suppression_enabled = screen.params.enable_static_phone_suppression;
+    ev.static_window_seconds = screen.params.static_phone_window_seconds;
+    ev.static_max_disp_ratio = screen.params.static_phone_max_disp_ratio;
+    ev.static_config_risk_multiplier = screen.params.static_phone_risk_multiplier;
+    ev.static_min_abs_disp_px = screen.params.static_phone_min_abs_disp_px;
+    ev.static_min_bbox_iou = screen.params.static_phone_min_bbox_iou;
+    ev.static_max_bbox_size_change_ratio = screen.params.static_phone_max_bbox_size_change_ratio;
+    ev.static_lower_person_start_ratio = screen.params.static_phone_lower_person_start_ratio;
+    ev.static_wrist_follow_min_motion_px = screen.params.static_phone_wrist_follow_min_motion_px;
+    ev.static_wrist_follow_cosine = screen.params.static_phone_wrist_follow_cosine;
+    ev.phone_in_desk_zone = point_in_zones(phone_center(phone), screen.desk_static_zones);
     const float required_conf = screen.params.phone_valid_conf_person_roi;
     auto [static_score, zone_reason] = static_zone_score(phone, screen);
     ev.static_zone_score = static_score;
@@ -1490,14 +1764,29 @@ static float candidate_delta(const std::string& level) {
     return 0.0f;
 }
 
-static void update_person_states(std::vector<Det>& people, const std::vector<CandidateEval>& evals,
+static void update_person_states(std::vector<Det>& people, std::vector<CandidateEval>& evals,
                                  std::map<int, PersonTrackState>& states, int frame_id,
-                                 int window_size, float risk_threshold, int min_hits, int handheld_suspect_min_hits) {
-    std::map<int, CandidateEval> best_by_track;
-    for (const auto& ev : evals) {
+                                 int window_size, float risk_threshold, int min_hits,
+                                 int handheld_suspect_min_hits, double infer_fps) {
+    std::map<int, Det*> people_by_track;
+    for (auto& person : people) {
+        if (person.track_id >= 0) people_by_track[person.track_id] = &person;
+    }
+    for (auto& ev : evals) {
+        if (ev.track_id < 0) continue;
+        auto pit = people_by_track.find(ev.track_id);
+        if (pit == people_by_track.end()) continue;
+        auto& state = states[ev.track_id];
+        state.track_id = ev.track_id;
+        apply_static_phone_suppression(ev, state, *pit->second, frame_id, static_cast<float>(infer_fps));
+    }
+
+    std::map<int, int> best_by_track;
+    for (int i = 0; i < static_cast<int>(evals.size()); ++i) {
+        const auto& ev = evals[i];
         if (ev.track_id < 0) continue;
         auto it = best_by_track.find(ev.track_id);
-        if (it == best_by_track.end() || ev.risk_score > it->second.risk_score) best_by_track[ev.track_id] = ev;
+        if (it == best_by_track.end() || ev.risk_score > evals[it->second].risk_score) best_by_track[ev.track_id] = i;
     }
     for (const auto& person : people) {
         if (person.track_id < 0) continue;
@@ -1505,10 +1794,17 @@ static void update_person_states(std::vector<Det>& people, const std::vector<Can
         state.track_id = person.track_id;
         auto it = best_by_track.find(person.track_id);
         const bool has_eval = it != best_by_track.end();
-        const float risk = has_eval ? it->second.risk_score : 0.0f;
-        const bool phone_seen = has_eval && it->second.phone_score > 0.0f;
-        const bool candidate = has_eval && it->second.accepted() && risk >= risk_threshold;
-        const bool handheld_candidate = has_eval && is_handheld_phone_suspect_candidate(it->second);
+        CandidateEval* ev = has_eval ? &evals[it->second] : nullptr;
+        const bool static_blocked = ev != nullptr && ev->static_suppressed;
+        if (static_blocked) {
+            state.risk_history.clear();
+            state.candidate_history.clear();
+            state.handheld_history.clear();
+        }
+        const float risk = ev != nullptr ? ev->risk_score : 0.0f;
+        const bool phone_seen = ev != nullptr && ev->phone_score > 0.0f;
+        const bool candidate = ev != nullptr && !static_blocked && ev->accepted() && risk >= risk_threshold;
+        const bool handheld_candidate = ev != nullptr && !static_blocked && is_handheld_phone_suspect_candidate(*ev);
         state.smoothed_bbox = state.has_smoothed_bbox ? lerp_rect(state.smoothed_bbox, person.box, 0.35f) : person.box;
         state.has_smoothed_bbox = true;
         push_limited(state.bbox_history, person.box, window_size);
@@ -1532,7 +1828,7 @@ static void update_person_states(std::vector<Det>& people, const std::vector<Can
         else state.state = "S0_CLEAR";
         if (has_eval) {
             state.last_risk_score = std::max(state.last_risk_score * 0.90f, risk);
-            if (!it->second.screen_id.empty()) state.last_screen_id = it->second.screen_id;
+            if (!ev->screen_id.empty()) state.last_screen_id = ev->screen_id;
         } else {
             state.last_risk_score *= 0.90f;
         }
@@ -1699,6 +1995,11 @@ struct Args {
     int pick_from_end = 1;
     std::string output_dir;
     bool no_video = false;
+    bool override_static_phone_suppression = false;
+    bool enable_static_phone_suppression = true;
+    float static_window_seconds = 1.5f;
+    float static_max_disp_ratio = 0.03f;
+    float static_risk_multiplier = 0.2f;
 };
 
 static Args parse_args(int argc, char** argv) {
@@ -1731,9 +2032,39 @@ static Args parse_args(int argc, char** argv) {
         else if (k == "--pick-from-end") a.pick_from_end = std::stoi(next());
         else if (k == "--output-dir") a.output_dir = next();
         else if (k == "--no-video") a.no_video = true;
+        else if (k == "--enable-static-phone-suppression") {
+            a.override_static_phone_suppression = true;
+            a.enable_static_phone_suppression = true;
+        }
+        else if (k == "--disable-static-phone-suppression") {
+            a.override_static_phone_suppression = true;
+            a.enable_static_phone_suppression = false;
+        }
+        else if (k == "--static-window-seconds") {
+            a.override_static_phone_suppression = true;
+            a.static_window_seconds = std::stof(next());
+        }
+        else if (k == "--static-max-disp-ratio") {
+            a.override_static_phone_suppression = true;
+            a.static_max_disp_ratio = std::stof(next());
+        }
+        else if (k == "--static-risk-multiplier") {
+            a.override_static_phone_suppression = true;
+            a.static_risk_multiplier = std::stof(next());
+        }
         else throw std::runtime_error("unknown arg " + k);
     }
     return a;
+}
+
+static void apply_static_args_to_screens(std::vector<ScreenConfig>& screens, const Args& args) {
+    if (!args.override_static_phone_suppression) return;
+    for (auto& screen : screens) {
+        screen.params.enable_static_phone_suppression = args.enable_static_phone_suppression;
+        screen.params.static_phone_window_seconds = args.static_window_seconds;
+        screen.params.static_phone_max_disp_ratio = args.static_max_disp_ratio;
+        screen.params.static_phone_risk_multiplier = args.static_risk_multiplier;
+    }
 }
 
 static json screen_to_json(const ScreenConfig& screen, size_t screen_index) {
@@ -1741,6 +2072,13 @@ static json screen_to_json(const ScreenConfig& screen, size_t screen_index) {
     j["screen_index"] = screen_index;
     j["screen_id"] = screen.screen_id;
     j["screen_poly"] = polygon_to_json(screen.screen_poly);
+    j["desk_static_zones"] = json::array();
+    for (const auto& z : screen.desk_static_zones) {
+        json item;
+        item["name"] = z.name;
+        item["polygon"] = polygon_to_json(z.polygon);
+        j["desk_static_zones"].push_back(std::move(item));
+    }
     return j;
 }
 
@@ -1748,6 +2086,22 @@ static int count_accepted(const std::vector<CandidateEval>& evals) {
     int n = 0;
     for (const auto& ev : evals) {
         if (ev.accepted()) ++n;
+    }
+    return n;
+}
+
+static int count_static_suppressed(const std::vector<CandidateEval>& evals) {
+    int n = 0;
+    for (const auto& ev : evals) {
+        if (ev.static_suppressed) ++n;
+    }
+    return n;
+}
+
+static int count_desk_zone_phones(const std::vector<CandidateEval>& evals) {
+    int n = 0;
+    for (const auto& ev : evals) {
+        if (ev.phone_in_desk_zone) ++n;
     }
     return n;
 }
@@ -1797,6 +2151,8 @@ static void write_event_metadata(std::ostream& jsonl,
     }
 
     const int accepted_count = count_accepted(evals);
+    const int static_suppressed_count = count_static_suppressed(evals);
+    const int desk_zone_phone_count = count_desk_zone_phones(evals);
     if (accepted_count <= 0 && suspect_tracks.empty()) return;
 
     const long long frame_index = std::max<long long>(0, stream.frames - 1);
@@ -1815,6 +2171,8 @@ static void write_event_metadata(std::ostream& jsonl,
     j["person_count"] = people.size();
     j["phone_count"] = phones.size();
     j["accepted_count"] = accepted_count;
+    j["static_phone_suppressed_candidates"] = static_suppressed_count;
+    j["desk_zone_phone_count"] = desk_zone_phone_count;
     j["alarm_track_count"] = alarm_tracks.size();
     j["suspect_track_count"] = suspect_tracks.size();
     j["max_risk"] = max_risk;
@@ -1850,6 +2208,7 @@ static void write_event_metadata(std::ostream& jsonl,
         p["window_hits"] = st != nullptr ? st->window_hits : 0;
         p["handheld_phone_hits"] = st != nullptr ? st->handheld_phone_hits : 0;
         p["handheld_phone_stable_count"] = st != nullptr ? st->handheld_phone_stable_count : 0;
+        p["static_phone_suppressed_hits"] = st != nullptr ? st->static_phone_suppressed_hits : 0;
         p["screen_id"] = ev != nullptr ? ev->screen_id : (st != nullptr ? st->last_screen_id : "");
         j["persons"].push_back(std::move(p));
     }
@@ -1875,6 +2234,7 @@ static void write_event_metadata(std::ostream& jsonl,
         p["window_hits"] = st.window_hits;
         p["handheld_phone_hits"] = st.handheld_phone_hits;
         p["handheld_phone_stable_count"] = st.handheld_phone_stable_count;
+        p["static_phone_suppressed_hits"] = st.static_phone_suppressed_hits;
         p["screen_id"] = st.last_screen_id;
         p["last_seen_age"] = stream.frame_id - st.last_seen;
         j["persons"].push_back(std::move(p));
@@ -1906,6 +2266,14 @@ static void write_event_metadata(std::ostream& jsonl,
         p["best_angle"] = ev != nullptr ? ev->best_angle : 180.0f;
         p["best_ray_hit"] = ev != nullptr && ev->best_ray_hit;
         p["handheld_suspect"] = ev != nullptr && is_handheld_phone_suspect_candidate(*ev);
+        p["phone_static"] = ev != nullptr && ev->phone_static;
+        p["phone_static_duration"] = ev != nullptr ? ev->phone_static_duration : 0.0f;
+        p["phone_motion_px"] = ev != nullptr ? ev->phone_motion_px : 0.0f;
+        p["phone_in_desk_zone"] = ev != nullptr && ev->phone_in_desk_zone;
+        p["static_suppressed"] = ev != nullptr && ev->static_suppressed;
+        p["static_risk_multiplier"] = ev != nullptr ? ev->static_risk_multiplier : 1.0f;
+        p["phone_follow_wrist"] = ev != nullptr && ev->phone_follow_wrist;
+        p["final_risk_score"] = ev != nullptr ? ev->risk_score : 0.0f;
         j["phones"].push_back(std::move(p));
     }
 
@@ -2018,9 +2386,10 @@ static int run_rule_self_test() {
 
     for (int frame_id = 1; frame_id <= screen.params.person_state_min_hits; ++frame_id) {
         risky.track_id = people[0].track_id;
-        update_person_states(people, {risky}, states, frame_id, screen.params.person_state_window,
+        std::vector<CandidateEval> risky_evals{risky};
+        update_person_states(people, risky_evals, states, frame_id, screen.params.person_state_window,
                              screen.params.person_state_risk_threshold, screen.params.person_state_min_hits,
-                             screen.params.handheld_suspect_min_hits);
+                             screen.params.handheld_suspect_min_hits, 10.0);
     }
     if (!states[people[0].track_id].alarm_triggered || states[people[0].track_id].window_hits < screen.params.person_state_min_hits) {
         std::cerr << "[SELF_TEST_RULES] temporal alarm did not trigger" << std::endl;
@@ -2036,11 +2405,12 @@ static int run_rule_self_test() {
     shifted_person.track_id = people[0].track_id;
     shifted_person.person_index = people[0].person_index;
     std::vector<Det> shifted_people{shifted_person};
-    update_person_states(shifted_people, {}, states, screen.params.person_state_min_hits + 1,
+    std::vector<CandidateEval> no_evals;
+    update_person_states(shifted_people, no_evals, states, screen.params.person_state_min_hits + 1,
                          screen.params.person_state_window,
                          screen.params.person_state_risk_threshold,
                          screen.params.person_state_min_hits,
-                         screen.params.handheld_suspect_min_hits);
+                         screen.params.handheld_suspect_min_hits, 10.0);
     const Rect display_box = display_bbox_for_track(states[people[0].track_id], shifted_person);
     if (std::abs(display_box.x1 - shifted_person.box.x1) < 1.0f) {
         std::cerr << "[SELF_TEST_RULES] display box should be smoothed, got raw x1=" << display_box.x1 << std::endl;
@@ -2070,15 +2440,52 @@ static int run_rule_self_test() {
         return 16;
     }
     for (int frame_id = 1; frame_id <= side_screen.params.handheld_suspect_min_hits; ++frame_id) {
-        update_person_states(side_people, {side_eval}, side_states, frame_id, side_screen.params.person_state_window,
+        std::vector<CandidateEval> side_evals{side_eval};
+        update_person_states(side_people, side_evals, side_states, frame_id, side_screen.params.person_state_window,
                              side_screen.params.person_state_risk_threshold, side_screen.params.person_state_min_hits,
-                             side_screen.params.handheld_suspect_min_hits);
+                             side_screen.params.handheld_suspect_min_hits, 10.0);
     }
     const auto& side_state = side_states[side_people[0].track_id];
     if (!is_suspect_track(side_state, side_screen.params.handheld_suspect_min_hits) || side_state.alarm_triggered) {
         std::cerr << "[SELF_TEST_RULES] side-screen handheld phone should hold suspect without alarm, hits="
                   << side_state.handheld_phone_hits << " alarm=" << side_state.alarm_triggered << std::endl;
         return 17;
+    }
+
+    ScreenConfig static_screen = screen;
+    static_screen.desk_static_zones.push_back(Zone{"desk", {{235, 255}, {330, 255}, {330, 360}, {235, 360}}, 1.0f});
+    static_screen.params.static_phone_window_seconds = 1.5f;
+    static_screen.params.static_phone_max_disp_ratio = 0.03f;
+    static_screen.params.static_phone_risk_multiplier = 0.2f;
+    Det static_person = person;
+    static_person.person_index = 3;
+    static_person.kpts[10][0] = 278; static_person.kpts[10][1] = 302; static_person.kpts[10][2] = 0.95f;
+    std::vector<Det> static_people{static_person};
+    std::map<int, PersonTrackState> static_states;
+    assign_person_track_ids(static_people, static_states, 20, 1, static_screen.params.person_state_window);
+    Det static_phone;
+    static_phone.box = Rect{262, 286, 294, 320};
+    static_phone.conf = 0.95f;
+    static_phone.person_index = static_people[0].person_index;
+    std::vector<CandidateEval> static_evals;
+    for (int frame_id = 1; frame_id <= 18; ++frame_id) {
+        CandidateEval static_eval = evaluate_phone(static_phone, static_screen, static_people, static_states, 640, 480, 0.35f);
+        static_eval.track_id = static_people[0].track_id;
+        static_evals = {static_eval};
+        update_person_states(static_people, static_evals, static_states, frame_id, static_screen.params.person_state_window,
+                             static_screen.params.person_state_risk_threshold, static_screen.params.person_state_min_hits,
+                             static_screen.params.handheld_suspect_min_hits, 10.0);
+    }
+    const auto& static_state = static_states[static_people[0].track_id];
+    if (static_evals.empty() || !static_evals[0].static_suppressed || static_evals[0].accepted()
+        || static_state.alarm_triggered || static_state.window_hits > 0) {
+        std::cerr << "[SELF_TEST_RULES] static phone should be suppressed, suppressed="
+                  << (static_evals.empty() ? 0 : static_evals[0].static_suppressed)
+                  << " accepted=" << (static_evals.empty() ? 0 : static_evals[0].accepted())
+                  << " risk=" << (static_evals.empty() ? 0.0f : static_evals[0].risk_score)
+                  << " hits=" << static_state.window_hits
+                  << " alarm=" << static_state.alarm_triggered << std::endl;
+        return 18;
     }
 
     std::cout << "[SELF_TEST_RULES] ok risk=" << std::fixed << std::setprecision(3)
@@ -2138,6 +2545,7 @@ int main(int argc, char** argv) {
             const std::string calib_name = calibration_name_for_path(path);
             const fs::path calib_path = calib_name.empty() ? fs::path() : fs::path(args.calib_dir) / calib_name;
             s.screens = load_calibration(calib_path.string(), s.width, s.height);
+            apply_static_args_to_screens(s.screens, args);
             make_sample_indices(s, args.infer_fps, args.max_samples);
             if (!args.output_dir.empty() && !args.no_video) {
                 fs::path out_path = fs::path(args.output_dir) / (std::to_string(streams.size()) + "_" + safe_stem(path) + "_boxed.mp4");
@@ -2181,6 +2589,8 @@ int main(int argc, char** argv) {
         long long total_frames = 0, total_persons = 0, total_persons_raw = 0, total_persons_deduped = 0;
         long long total_rois = 0, total_phones_raw = 0, total_phones_nms = 0;
         long long total_accepted_candidates = 0, total_alarm_frames = 0;
+        long long total_static_phone_suppressed_frames = 0, total_static_phone_suppressed_candidates = 0;
+        long long total_desk_zone_phone_frames = 0;
 
         std::vector<cv::Mat> frames(args.pose_batch);
         std::vector<int> active_streams;
@@ -2406,10 +2816,11 @@ int main(int argc, char** argv) {
                 if (streams[si].screens.empty()) {
                     const int window_size = stream_state_window(streams[si]);
                     const int min_hits = stream_state_min_hits(streams[si], window_size);
-                    update_person_states(people_by_stream[si], {}, streams[si].person_states,
+                    std::vector<CandidateEval> no_evals;
+                    update_person_states(people_by_stream[si], no_evals, streams[si].person_states,
                                          streams[si].frame_id, window_size,
                                          stream_state_risk_threshold(streams[si]), min_hits,
-                                         stream_handheld_suspect_min_hits(streams[si], min_hits));
+                                         stream_handheld_suspect_min_hits(streams[si], min_hits), args.infer_fps);
                     continue;
                 }
                 for (const auto& ph : phones_keep_by_stream[si]) {
@@ -2428,7 +2839,7 @@ int main(int argc, char** argv) {
                 const float risk_thr = stream_state_risk_threshold(streams[si]);
                 update_person_states(people_by_stream[si], evals_by_stream[si], streams[si].person_states,
                                      streams[si].frame_id, window_size, risk_thr, min_hits,
-                                     stream_handheld_suspect_min_hits(streams[si], min_hits));
+                                     stream_handheld_suspect_min_hits(streams[si], min_hits), args.infer_fps);
 
                 std::set<int> visible_track_ids;
                 for (const auto& person : people_by_stream[si]) {
@@ -2445,8 +2856,16 @@ int main(int argc, char** argv) {
                 streams[si].alert_counter = static_cast<float>(max_hits);
                 streams[si].alarm_frames += active_alarm_tracks.empty() ? 0 : 1;
                 total_alarm_frames += active_alarm_tracks.empty() ? 0 : 1;
+                bool has_static_suppressed = false;
+                bool has_desk_zone_phone = false;
                 for (auto& ev : evals_by_stream[si]) {
                     auto st = streams[si].person_states.find(ev.track_id);
+                    if (ev.static_suppressed) {
+                        has_static_suppressed = true;
+                        streams[si].static_phone_suppressed_candidates += 1;
+                        total_static_phone_suppressed_candidates += 1;
+                    }
+                    if (ev.phone_in_desk_zone) has_desk_zone_phone = true;
                     if (st == streams[si].person_states.end()) continue;
                     ev.person_alarm = st->second.alarm_triggered;
                     ev.person_window_hits = st->second.window_hits;
@@ -2455,6 +2874,10 @@ int main(int argc, char** argv) {
                         total_accepted_candidates += 1;
                     }
                 }
+                streams[si].static_phone_suppressed_frames += has_static_suppressed ? 1 : 0;
+                streams[si].desk_zone_phone_frames += has_desk_zone_phone ? 1 : 0;
+                total_static_phone_suppressed_frames += has_static_suppressed ? 1 : 0;
+                total_desk_zone_phone_frames += has_desk_zone_phone ? 1 : 0;
                 streams[si].previous_alarm_tracks = std::move(active_alarm_tracks);
                 prune_person_tracks(streams[si].person_states, streams[si].frame_id, window_size);
             }
@@ -2515,10 +2938,15 @@ int main(int argc, char** argv) {
                             const CandidateEval* ev = best_eval_for_phone(evals_by_stream[si], ph);
                             const bool accepted_phone = ev != nullptr && ev->accepted();
                             const bool handheld_phone = ev != nullptr && is_handheld_phone_suspect_candidate(*ev);
+                            const bool static_phone = ev != nullptr && ev->static_suppressed;
                             cv::Scalar phone_color = cv::Scalar(120, 120, 120);
                             int phone_thickness = 1;
                             std::ostringstream label;
-                            if (accepted_phone) {
+                            if (static_phone) {
+                                phone_color = cv::Scalar(150, 150, 150);
+                                phone_thickness = 2;
+                                label << "STATIC PHONE";
+                            } else if (accepted_phone) {
                                 phone_color = cv::Scalar(0, 0, 255);
                                 phone_thickness = 3;
                                 label << "PHONE " << std::fixed << std::setprecision(2) << ph.conf
@@ -2528,6 +2956,8 @@ int main(int argc, char** argv) {
                                 phone_thickness = 2;
                                 label << "PHONE " << std::fixed << std::setprecision(2) << ph.conf
                                       << " S" << ev->risk_score;
+                            } else {
+                                continue;
                             }
                             draw_rect(annotated, ph.box, phone_color, phone_thickness, label.str(), 0.40, false);
                         }
@@ -2559,6 +2989,7 @@ int main(int argc, char** argv) {
                           << " persons_deduped=" << total_persons_deduped
                           << " rois=" << total_rois
                           << " accepted=" << total_accepted_candidates
+                          << " static_suppressed=" << total_static_phone_suppressed_candidates
                           << " alarm_frames=" << total_alarm_frames
                           << std::endl;
             }
@@ -2582,6 +3013,9 @@ int main(int argc, char** argv) {
                   << " phones_raw=" << total_phones_raw
                   << " phones_nms=" << total_phones_nms
                   << " accepted=" << total_accepted_candidates
+                  << " static_suppressed_candidates=" << total_static_phone_suppressed_candidates
+                  << " static_suppressed_frames=" << total_static_phone_suppressed_frames
+                  << " desk_zone_phone_frames=" << total_desk_zone_phone_frames
                   << " alarm_frames=" << total_alarm_frames
                   << std::endl;
         std::cout << "[TIMING] read=" << t_read
@@ -2602,6 +3036,9 @@ int main(int argc, char** argv) {
                       << " phones_raw=" << s.phones_raw
                       << " phones_nms=" << s.phones_nms
                       << " accepted=" << s.accepted_candidates
+                      << " static_suppressed_candidates=" << s.static_phone_suppressed_candidates
+                      << " static_suppressed_frames=" << s.static_phone_suppressed_frames
+                      << " desk_zone_phone_frames=" << s.desk_zone_phone_frames
                       << " alarm_frames=" << s.alarm_frames
                       << " screens=" << s.screens.size()
                       << " path=" << s.path
