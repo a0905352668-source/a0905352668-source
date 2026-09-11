@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "active_version": "strict-evidence-yolo26s-pose-b15-phone-dynamic-b1-b32-gpupost-fps10-20260824",
+  "deepstream": {
+    "binary": "/media/boshi/Data/JianKong/01_algorithms/versions/deepstream_motion_confirmation_20260909_v3/bin/jiankong_custom_pipeline",
+    "binary_sha256": "6fa6159f417c9e0aa1746f6f9a04941ef6fe09e920913768d38b9e3c66e5aad7",
+    "source": "/media/boshi/Data/JianKong/01_algorithms/versions/deepstream_motion_confirmation_20260909_v3/source/deepstream/custom_pipeline/src/jiankong_custom_pipeline.cu",
+    "source_sha256": "4d9ba12878d6d5e1bc6b3c90f08b370b1356325b2f4d23d65df600ff6ffcfa54"
+  },
+  "artifact_sha256": {
+    "pose_plan": "1222798f3ee58499474a52d87276179dc1a970c05a570cde7e85280501ad8cda",
+    "phone_engine": "33fa0d269679985e454d5dec09e3579b32ec531570e67e422282d7018c64464c",
+    "calibrations": {
+      "ffs_d4_screen_calibration.json": "e3c6c38d1bb404da9b589c5c42acd055efc419801670c80c6df650f76bf8806b",
+      "camera08_screen_calibration.json": "bade9e850acfd665bb0dc8d8a11c9c0db13fc8ead7be94a1ceb5e2b8c9c2c205",
+      "camera09_screen_calibration.json": "0fc5213c59baec0366119d828433f19b8d1a37f035f297882ff42ff191622de2",
+      "camera10_screen_calibration.json": "7bddb4e571f0ae7e3ee485a22f139ade63d3ec4fd90f655fbdbf682dc7ab9256",
+      "camera11_screen_calibration.json": "7072cb9a3e3c6fba1e2806dce1e8a191e8506d4e4d204bfefb45b41c86fdac4d",
+      "camera13_screen_calibration.json": "89bb3060f49e2dfde16a4aa27c7f9d30fa74efeea35af220aa00acceefb1d8a1",
+      "camera14_screen_calibration.json": "44ae0c1c8ce0e7cec585eff267c38f9007e9f52218c686abc49bc495c349c99f",
+      "camera15_screen_calibration.json": "cc533b1266cb8cbc116e613e3318eeecd6bda5e49f79a737b78c4d0c5bb64b8a"
+    }
+  },
+  "camera_config": {
+    "path": "/media/boshi/Data/JianKong/02_configs/runtime/live_operator.json",
+    "sha256": "e198f4c3beaf54ebff8d08647d49aa93bc879d228a50387d2e36ecc7d940b5cf",
+    "enabled_relays": [
+      "ffs_d4",
+      "camera08",
+      "camera09",
+      "camera10",
+      "camera11",
+      "camera13",
+      "camera14",
+      "camera15"
+    ],
+    "calibrations": [
+      "ffs_d4_screen_calibration.json",
+      "camera08_screen_calibration.json",
+      "camera09_screen_calibration.json",
+      "camera10_screen_calibration.json",
+      "camera11_screen_calibration.json",
+      "camera13_screen_calibration.json",
+      "camera14_screen_calibration.json",
+      "camera15_screen_calibration.json"
+    ]
+  }
+}

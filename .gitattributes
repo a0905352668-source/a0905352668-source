@@ -7,3 +7,7 @@
 *.hpp text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+
+# Production snapshots must remain byte-for-byte comparable with deployed sources.
+/01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/** -text
+/01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/** -text
