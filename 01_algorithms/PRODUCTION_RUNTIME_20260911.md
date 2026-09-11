@@ -86,7 +86,7 @@ Python 生产快照在生产机 Python 3.13 + pytest 8.4.2 环境中的检查：
 
 ```sh
 python3 -m compileall -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata
-python3 -m pytest -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/tests
+python3 -m pytest -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/live_operator/tests
 ```
 
 目录同步比对使用 `rsync -ani --delete`，统一排除 `bin/`、`__pycache__/`、`.pytest_cache/`、`._*`、`*.orig`、`*.bak`，并对 v178 额外排除发布根目录中的 `app-before-*` 和 `styles-before-*`。运行清单以 `sha256sum` 同时校验线上文件与 Git 快照。
