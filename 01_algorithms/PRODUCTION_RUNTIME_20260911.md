@@ -82,11 +82,14 @@ cmake --build /tmp/jiankong-v4-cpu-build
 ctest --test-dir /tmp/jiankong-v4-cpu-build --output-on-failure
 ```
 
-Python 生产快照在生产机 Python 3.13 + pytest 8.4.2 环境中的检查：
+Python 生产快照使用生产机上的显式 Python 3.13 解释器检查。pytest 从临时便携依赖目录加载（`pytest==8.4.2`、`iniconfig==2.1.0`、`packaging==26.2`、`pluggy==1.6.0`、`pygments==2.20.0`）；生产机默认的 `/usr/bin/python3` 是 3.10，不用于该项验证：
 
 ```sh
-python3 -m compileall -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata
-python3 -m pytest -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/live_operator/tests
+release="$PWD/01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata"
+pytest_bundle=/tmp/jk-pytest-portable.GquyS4
+/home/boshi/miniconda3/bin/python3.13 -m compileall -q "$release"
+PYTHONPATH="$pytest_bundle:$release" /home/boshi/miniconda3/bin/python3.13 -m pytest --version
+PYTHONPATH="$pytest_bundle:$release" /home/boshi/miniconda3/bin/python3.13 -m pytest -q "$release/live_operator/tests"
 ```
 
-目录同步比对使用 `rsync -ani --delete`，统一排除 `bin/`、`__pycache__/`、`.pytest_cache/`、`._*`、`*.orig`、`*.bak`，并对 v178 额外排除发布根目录中的 `app-before-*` 和 `styles-before-*`。运行清单以 `sha256sum` 同时校验线上文件与 Git 快照。
+目录同步比对使用 `rsync -rnic --delete`（递归、dry-run、逐文件校验和），统一排除 `bin/`、`__pycache__/`、`.pytest_cache/`、`._*`、`*.orig`、`*.bak`、`*.backup_*`。v178 额外排除发布根目录中的 `app-before-*` 和 `styles-before-*`；v4 额外排除仅由本快照补回的 `/source/tools/***`，其两个文件分别按上文 SHA256 校验。运行清单以 `sha256sum` 同时校验线上文件与 Git 快照。
