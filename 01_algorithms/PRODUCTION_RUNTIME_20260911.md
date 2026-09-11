@@ -9,6 +9,8 @@
 - Git 内 Python 快照：`01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata`
 - DeepStream 运行二进制：`/media/boshi/Data/JianKong/01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/bin/jiankong_custom_pipeline`
 - Git 内 DeepStream 源码：`01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/source`
+- 生产运行清单：`/media/boshi/Data/JianKong/02_configs/runtime/live_runtime_manifest.json`
+- Git 内运行清单快照：`01_algorithms/LIVE_RUNTIME_MANIFEST_20260911.json`
 - 容器镜像：`jiankong/deepstream:7.0-samples-dev`
 - 容器镜像 ID：`sha256:e2739c816593a50b8c3a88533066e089c67d5efbc8a2a07eee5d2aea32f338b2`
 - 推理帧率：10 FPS
@@ -26,6 +28,7 @@
 | 当前 pose plan（不提交） | `1222798f3ee58499474a52d87276179dc1a970c05a570cde7e85280501ad8cda` |
 | 当前 phone engine（不提交） | `33fa0d269679985e454d5dec09e3579b32ec531570e67e422282d7018c64464c` |
 | 当前运行配置（只记录哈希，不提交内容） | `e198f4c3beaf54ebff8d08647d49aa93bc879d228a50387d2e36ecc7d940b5cf` |
+| 生产运行清单 | `c3d6894ab3b97feff187a51fc34e7d05c62d94dbd1c3f4d696c6226f02e0ee24` |
 
 ## 同步边界
 
@@ -33,7 +36,8 @@
 
 - 当前 v178 Python 服务、前端静态资源、单元测试和启动脚本；
 - v178 发布包中的 DeepStream 源码快照；
-- 当前 v4 二进制对应的 DeepStream/CUDA 源码、第三方 ByteTrack 源码、测试和两项静态手机回归辅助工具；
+- 当前 v4 二进制对应的 DeepStream/CUDA 源码、第三方 ByteTrack 源码、测试和两项静态手机回归辅助工具；辅助工具取自 `/media/boshi/Data/00_active_projects/JianKong/00_staging/dynbatch_gpucompact_20260822_writable/source/tools`：`extract_static_phone_regression_fixture.py` 的 SHA256 为 `fd02dba0c26799d3ef6d45ad8377a39b98a7c2bca1633e0352594c2d46672e64`，`validate_static_phone_regression.py` 的 SHA256 为 `de08a829aeea6d82b760872a391e4e95d39576d6234b6c7eb03339d0f9504eee`；
+- 不含凭据的权威生产运行清单；
 - v4 的升级前来源清单 `manifest-before.json`。
 
 明确排除：
@@ -56,5 +60,33 @@
 - v4 DeepStream：10 个 CMake/CTest 目标全部通过；
 - v4 管线合同：34 项全部通过；
 - Python 生产源码：`compileall` 通过；
-- 同步后目录与来源目录的 rsync 校验无差异；
+- v178 在下列排除项下与来源目录的 rsync 校验无差异；v4 源码在相同排除项下与来源目录无差异，随后仅增加了上文两项哈希固定的回归辅助工具；
 - 敏感配置、模型和编译产物未进入 Git 同步范围。
+
+## 可复现验证命令
+
+原仓库基线：
+
+```sh
+PYTHONPATH=01_algorithms python3 -m unittest discover -s 01_algorithms/tests
+(cd 01_algorithms && PYTHONPATH=. python3 -m unittest discover -s realtime_sim/tests)
+```
+
+v4 CPU 合同与 CTest：
+
+```sh
+python3 01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/source/deepstream/custom_pipeline/tests/pipeline_contract_test.py
+cmake -S 01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/source/deepstream/custom_pipeline \
+  -B /tmp/jiankong-v4-cpu-build -DBUILD_TESTING=ON
+cmake --build /tmp/jiankong-v4-cpu-build
+ctest --test-dir /tmp/jiankong-v4-cpu-build --output-on-failure
+```
+
+Python 生产快照在生产机 Python 3.13 + pytest 8.4.2 环境中的检查：
+
+```sh
+python3 -m compileall -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata
+python3 -m pytest -q 01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/tests
+```
+
+目录同步比对使用 `rsync -ani --delete`，统一排除 `bin/`、`__pycache__/`、`.pytest_cache/`、`._*`、`*.orig`、`*.bak`，并对 v178 额外排除发布根目录中的 `app-before-*` 和 `styles-before-*`。运行清单以 `sha256sum` 同时校验线上文件与 Git 快照。
