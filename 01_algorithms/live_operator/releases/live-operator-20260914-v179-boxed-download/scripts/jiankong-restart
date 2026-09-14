@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This is the only supported full restart entry point for production.  The
+# watchdog must not observe a half-started runtime, otherwise it correctly
+# treats the new process as unowned and blocks recovery.
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "jiankong-restart: run with sudo" >&2
+    exit 77
+fi
+
+WATCHDOG_UNIT="${JIAN_KONG_WATCHDOG_UNIT:-jiankong-live-watchdog.service}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+if [[ -d "${LOCAL_ROOT}/live_operator" ]]; then
+    RELEASE_ROOT="${LOCAL_ROOT}"
+else
+    RELEASE_ROOT="${JIAN_KONG_RELEASE_ROOT:-/media/boshi/Data/00_active_projects/JianKong/01_algorithms/live_operator/current}"
+fi
+RELEASE_ROOT="$(realpath -e -- "${RELEASE_ROOT}")"
+RUN_AS_USER="${JIAN_KONG_RUNTIME_USER:-boshi}"
+WATCHDOG_WAS_ACTIVE=0
+
+if systemctl is-active --quiet "${WATCHDOG_UNIT}"; then
+    WATCHDOG_WAS_ACTIVE=1
+fi
+
+restore_watchdog() {
+    local status=$?
+    trap - EXIT
+    if [[ "${WATCHDOG_WAS_ACTIVE}" -eq 1 ]]; then
+        if ! systemctl start "${WATCHDOG_UNIT}"; then
+            echo "jiankong-restart: watchdog could not be restored" >&2
+            status=1
+        fi
+    fi
+    exit "${status}"
+}
+trap restore_watchdog EXIT
+
+if [[ "${WATCHDOG_WAS_ACTIVE}" -eq 1 ]]; then
+    systemctl stop "${WATCHDOG_UNIT}"
+fi
+
+runuser -u "${RUN_AS_USER}" -- "${RELEASE_ROOT}/scripts/jiankong-stop"
+runuser -u "${RUN_AS_USER}" -- "${RELEASE_ROOT}/scripts/jiankong-start"
+runuser -u "${RUN_AS_USER}" -- "${RELEASE_ROOT}/scripts/jiankong-status"

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Root-owned, argument-free activation path for a dashboard camera draft.
+# The dashboard itself never receives shell access.  This wrapper is intended
+# to be the *only* command allowed by a narrowly scoped sudoers rule.
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "jiankong-camera-publish: run with sudo" >&2
+  exit 77
+fi
+if [[ "$#" -ne 0 ]]; then
+  echo "jiankong-camera-publish: no arguments are accepted" >&2
+  exit 64
+fi
+
+# A double-clicked web button or a delayed browser retry must never launch two
+# lifecycle operations.  Keep the lock outside the release tree so a release
+# switch cannot discard it mid-operation.
+exec 9>/run/jiankong-camera-publish.lock
+if ! flock -n 9; then
+  echo "jiankong-camera-publish: another publish is already active" >&2
+  exit 75
+fi
+
+WATCHDOG_UNIT="${JIAN_KONG_WATCHDOG_UNIT:-jiankong-live-watchdog.service}"
+RUN_AS_USER="${JIAN_KONG_RUNTIME_USER:-boshi}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+if [[ -d "${LOCAL_ROOT}/live_operator" ]]; then
+  RELEASE_ROOT="${LOCAL_ROOT}"
+else
+  RELEASE_ROOT="${JIAN_KONG_RELEASE_ROOT:-/media/boshi/Data/00_active_projects/JianKong/01_algorithms/live_operator/current}"
+fi
+RELEASE_ROOT="$(realpath -e -- "${RELEASE_ROOT}")"
+CONFIG_PATH="${JIAN_KONG_CONFIG_PATH:-/media/boshi/Data/JianKong/02_configs/runtime/live_operator.json}"
+WATCHDOG_WAS_ACTIVE=0
+
+# Validate all planned camera sources while the existing production pipeline is
+# still running.  A bad IP, credential, port, or RTSP path therefore never
+# stops the live service merely to discover that it cannot start.
+runuser -u "${RUN_AS_USER}" -- env "PYTHONPATH=${RELEASE_ROOT}" \
+  /home/boshi/miniconda3/bin/python -m live_operator.camera_management \
+  --config "${CONFIG_PATH}" --preflight
+
+if systemctl is-active --quiet "${WATCHDOG_UNIT}"; then
+  WATCHDOG_WAS_ACTIVE=1
+  systemctl stop "${WATCHDOG_UNIT}"
+fi
+
+restore_watchdog() {
+  local status=$?
+  trap - EXIT
+  if [[ "${WATCHDOG_WAS_ACTIVE}" -eq 1 ]]; then
+    if ! systemctl start "${WATCHDOG_UNIT}"; then
+      echo "jiankong-camera-publish: watchdog could not be restored" >&2
+      status=1
+    fi
+  fi
+  exit "${status}"
+}
+trap restore_watchdog EXIT
+
+runuser -u "${RUN_AS_USER}" -- env "PYTHONPATH=${RELEASE_ROOT}" \
+  /home/boshi/miniconda3/bin/python -m live_operator.camera_management \
+  --config "${CONFIG_PATH}" --publish
+
+# Use the sole supported production lifecycle entry point.  It owns recovery
+# if Docker process verification has to force a stop before starting again.
+/usr/local/bin/jiankong-restart

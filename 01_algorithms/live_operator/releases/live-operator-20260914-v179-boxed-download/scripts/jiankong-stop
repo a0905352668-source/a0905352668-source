@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+if [[ -d "${LOCAL_ROOT}/live_operator" ]]; then
+    RELEASE_ROOT="${LOCAL_ROOT}"
+else
+    RELEASE_ROOT="${JIAN_KONG_RELEASE_ROOT:-/media/boshi/Data/JianKong/01_algorithms/live_operator/current}"
+fi
+PYTHON_BIN="${JIAN_KONG_PYTHON_BIN:-/home/boshi/miniconda3/bin/python}"
+export PYTHONPATH="${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+exec "${PYTHON_BIN}" -m live_operator.cli stop "$@"
