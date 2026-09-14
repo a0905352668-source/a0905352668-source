@@ -1674,7 +1674,7 @@ if (typeof document !== "undefined") {
     downloadGeneration += 1;
     downloadEvent = event;
     downloadButton.disabled = !event.clip_url;
-    downloadButton.textContent = "↓ 下载带框视频";
+    downloadButton.textContent = "↓ 下载视频";
     downloadButton.title = "保存仅带人物框和手机框的 MP4 视频";
     downloadButton.setAttribute("aria-busy", "false");
     const generation = selectionGate.begin();
@@ -2676,7 +2676,7 @@ if (typeof document !== "undefined") {
     downloadGeneration += 1;
     downloadEvent = null;
     downloadButton.disabled = true;
-    downloadButton.textContent = "↓ 下载带框视频";
+    downloadButton.textContent = "↓ 下载视频";
     downloadButton.setAttribute("aria-busy", "false");
     selectionGate.begin();
     if (overlayController) overlayController.abort();
@@ -3167,7 +3167,7 @@ if (typeof document !== "undefined") {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      downloadButton.textContent = "↓ 下载带框视频";
+      downloadButton.textContent = "↓ 下载视频";
     } catch (error) {
       if (isCurrent()) {
         downloadButton.textContent = "下载重试";

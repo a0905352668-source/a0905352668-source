@@ -2,7 +2,7 @@
 
 基于生产 v178 复制，现有推理、规则、配置和原视频均不改变。本文件不表示该版本已经上线。
 
-播放器右上角，全屏按钮左侧增加“下载带框视频”。导出的 H.264 MP4 只有人物（包含 risk 人物）和手机轮廓框，无屏幕框、射线或文字标签。原始摄像头自带时间/水印不移除。下载不受网页标注复选框影响。
+播放器右上角，全屏按钮左侧增加“下载视频”。导出的 H.264 MP4 只有人物（包含 risk 人物）和手机轮廓框，无屏幕框、射线或文字标签。原始摄像头自带时间/水印不移除。下载不受网页标注复选框影响。
 
 当前事件 `POST /api/events/<event_id>/download`，历史事件 `POST /api/runs/<run_id>/events/<event_id>/download` 请求生成；相同地址 GET/HEAD 只查询，不生成。返回 queued/running/ready/error；ready 时返回 `/download/file`。文件路由支持 GET、HEAD、Range 和 attachment，不更改原播放路由。
 
