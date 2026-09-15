@@ -22,6 +22,20 @@ from live_operator.cli import (
     _read_latest_json_line,
 )
 from live_operator.processes import ProcessIdentity, StateStore
+from live_operator.config import make_legacy_config
+
+
+def _configured_hooks(**kwargs):
+    hooks = RuntimeHooks(**kwargs)
+    hooks._active_relays = tuple(f"camera{index:02d}" for index in range(1, 8))
+    return hooks
+
+
+def _camera_config():
+    return make_legacy_config("fixture", "fixture", {
+        view: f"192.0.2.{index}" for index, view in enumerate(
+            ("dianqi1", "dianqi2", "jixie1", "jixie2", "ruanjian1", "ruanjian2", "zoulang"), 1)
+    })
 
 
 class Hooks:
@@ -278,7 +292,7 @@ def test_production_relay_probe_checks_all_seven_and_rejects_one_failure() -> No
         )
 
     with pytest.raises(LifecycleError, match=r"camera0[1-7]"):
-        RuntimeHooks(probe_runner=runner, relay_ready_timeout=0).probe_relays()
+        _configured_hooks(probe_runner=runner, relay_ready_timeout=0).probe_relays()
     assert len(calls) == 7
 
 
@@ -294,7 +308,7 @@ def test_production_relay_probe_retries_a_source_while_mediamtx_warms_up() -> No
             stderr="",
         )
 
-    assert RuntimeHooks(probe_runner=runner, relay_ready_timeout=2).probe_relays() == [
+    assert _configured_hooks(probe_runner=runner, relay_ready_timeout=2).probe_relays() == [
         f"camera{index:02d}" for index in range(1, 8)
     ]
     assert len(calls) == 8
@@ -310,11 +324,12 @@ def test_production_relay_probe_respects_short_total_warmup_budget() -> None:
 
     started = time.monotonic()
     with pytest.raises(LifecycleError, match="relay preflight failed"):
-        RuntimeHooks(probe_runner=runner, relay_ready_timeout=0.05).probe_relays()
+        _configured_hooks(probe_runner=runner, relay_ready_timeout=0.05).probe_relays()
     assert time.monotonic() - started < 0.2
     assert len(calls) == 7
 
 
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="requires Linux /proc process ownership")
 def test_process_group_and_labeled_container_cleanup(monkeypatch) -> None:
     import live_operator.cli as cli_module
     import live_operator.processes as process_module
@@ -360,6 +375,7 @@ def test_start_component_passes_unique_strict_owner_token_to_launcher(
         lambda process, owner_token=None: ProcessIdentity(process.pid, "start", 123, owner_token),
     )
     hooks = RuntimeHooks()
+    hooks.config_path = tmp_path / "live.json"
     first = hooks.start_component("services", tmp_path, object())
     second = hooks.start_component("services", tmp_path, object())
     assert first.owner_token != second.owner_token
@@ -399,7 +415,7 @@ def test_deepstream_component_uses_long_lived_production_duration(
         lambda process, owner_token=None: ProcessIdentity(process.pid, "start", 123, owner_token),
     )
 
-    RuntimeHooks().start_component("deepstream", tmp_path, object())
+    RuntimeHooks().start_component("deepstream", tmp_path, _camera_config())
 
     assert observed[0][1]["env"]["DURATION_SEC"] == "31536000"
 
@@ -454,7 +470,7 @@ def test_deepstream_component_launches_from_active_release(
     )
 
     run_dir = tmp_path / "run"
-    RuntimeHooks().start_component("deepstream", run_dir, object())
+    RuntimeHooks().start_component("deepstream", run_dir, _camera_config())
 
     command, kwargs = observed[0]
     environment = kwargs["env"]
@@ -565,7 +581,7 @@ def test_runtime_verification_uses_seven_stream_stats_not_alarm_events(
     (inference_dir / "frame_events.jsonl").write_text("", encoding="utf-8")
     stats_path = inference_dir / "live_stats.jsonl"
     stats_path.write_text("", encoding="utf-8")
-    hooks = RuntimeHooks(runtime_ready_timeout=1.0)
+    hooks = _configured_hooks(runtime_ready_timeout=1.0)
     monkeypatch.setattr(hooks, "is_same_process", lambda _identity: True)
 
     def publish_stats() -> None:
@@ -602,7 +618,7 @@ def test_runtime_progress_accepts_truncated_stats_after_restart(
     inference_dir.mkdir()
     stats_path = inference_dir / "live_stats.jsonl"
     stats_path.write_text("x" * 10000, encoding="utf-8")
-    hooks = RuntimeHooks(runtime_ready_timeout=1.0)
+    hooks = _configured_hooks(runtime_ready_timeout=1.0)
     monkeypatch.setattr(hooks, "is_same_process", lambda _identity: True)
 
     def replace_stats() -> None:
@@ -812,7 +828,7 @@ def test_state_lock_serializes_separate_processes(tmp_path: Path) -> None:
         holder.wait(2)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups and /proc")
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="requires Linux process groups and /proc")
 def test_stop_process_cleans_real_owned_process_group() -> None:
     from live_operator.processes import capture_identity, owned_process_group_exists, stop_process
 
@@ -830,7 +846,7 @@ def test_stop_process_cleans_real_owned_process_group() -> None:
     assert not owned_process_group_exists(identity)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="requires memfd and executable fake ffprobe")
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="requires Linux /proc and executable fake ffprobe")
 def test_ffprobe_subprocess_reads_memfd_without_secret_argv_and_times_out(
     tmp_path: Path, monkeypatch
 ) -> None:
