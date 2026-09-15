@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import signal
 import stat
 import uuid
 from contextlib import contextmanager
@@ -26,6 +27,20 @@ def identity(value):
 def regular(value):
     if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
         raise ValueError("file authority must be regular with exactly one link")
+
+
+@contextmanager
+def publication_signal_guard():
+    """Defer handled exit signals until the rename and retained pin agree.
+
+    The old mask is restored even on I/O failure. A pending handled signal then
+    reaches the caller with either the old pin or a proven known-publication pin.
+    """
+    old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
 
 
 class PinnedDirectory:
@@ -150,12 +165,26 @@ class PinnedFile:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            self.parent.verify()
-            os.replace(name, self.name, src_dir_fd=self.parent.fd, dst_dir_fd=self.parent.fd)
-            os.fsync(self.parent.fd)
-            self.content = content
-            self.expected = identity(self._stat())
-            self.verify()
+                # This is the exclusive temporary file we created and wrote,
+                # captured before rename; never infer its identity from a later
+                # arbitrary occupant of the authoritative destination path.
+                published_metadata = os.fstat(stream.fileno())
+            with publication_signal_guard():
+                try:
+                    self.parent.verify()
+                    os.replace(name, self.name, src_dir_fd=self.parent.fd, dst_dir_fd=self.parent.fd)
+                    self._reconcile_publication(content, published_metadata)
+                    os.fsync(self.parent.fd)
+                    self.verify()
+                except BaseException:
+                    # replace can succeed before an exception is delivered (or
+                    # directory fsync can fail). Advance only to our exact known
+                    # inode, bytes and metadata so rollback can read that state.
+                    try:
+                        self._reconcile_publication(content, published_metadata)
+                    except BaseException:
+                        pass  # Unknown replacements remain rejected by the pin.
+                    raise
         finally:
             if fd >= 0:
                 os.close(fd)
@@ -163,6 +192,16 @@ class PinnedFile:
                 os.unlink(name, dir_fd=self.parent.fd)
             except FileNotFoundError:
                 pass
+
+    def _reconcile_publication(self, content: bytes, published_metadata):
+        current_content, current = self.read_with_metadata()
+        if (identity(current) != identity(published_metadata) or current_content != content
+                or (current.st_uid, current.st_gid, stat.S_IMODE(current.st_mode)) != (
+                    published_metadata.st_uid, published_metadata.st_gid,
+                    stat.S_IMODE(published_metadata.st_mode))):
+            raise ValueError("destination is not the exact known publication")
+        self.content = content
+        self.expected = identity(published_metadata)
 
     def replace_link(self, target: str | Path, *, restore=False):
         self.parent.verify()

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -735,3 +737,91 @@ def test_privileged_systemctl_does_not_search_caller_path(monkeypatch):
                         commands.append(command) or subprocess.CompletedProcess(command, 0, stdout="active\n"))
     assert reload.ReloadHooks._systemctl("start", "jiankong-live-watchdog.service") == "active\n"
     assert commands == [["/usr/bin/systemctl", "start", "jiankong-live-watchdog.service"]]
+
+
+@pytest.mark.parametrize("failure", ["after-rename", "directory-fsync", "interrupt", "handled-signal"])
+def test_state_publication_failure_reconciles_known_inode_before_rollback(rig, monkeypatch, failure):
+    actual_replace = os.replace
+    actual_fsync = os.fsync
+    renamed = False
+    injected = False
+    signal_observed_consistent_pin = []
+    original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    def handled_exit(signum, frame):
+        pin = rig.operation.store.file
+        actual = rig.store.path.stat()
+        signal_observed_consistent_pin.append(pin.expected == (actual.st_dev, actual.st_ino))
+        raise KeyboardInterrupt()
+    previous_handler = signal.signal(signal.SIGTERM, handled_exit)
+    def replace_file(source, destination, **kwargs):
+        nonlocal renamed, injected
+        result = actual_replace(source, destination, **kwargs)
+        if destination == rig.store.path.name and not renamed:
+            renamed = True
+            if failure != "directory-fsync":
+                injected = True
+                if failure == "interrupt":
+                    raise KeyboardInterrupt()
+                if failure == "handled-signal":
+                    signal.raise_signal(signal.SIGTERM)
+                    return result
+                raise OSError("injected immediately after successful state rename")
+        return result
+    def fsync_file(fd):
+        nonlocal injected
+        if failure == "directory-fsync" and renamed and not injected and stat.S_ISDIR(os.fstat(fd).st_mode):
+            injected = True
+            raise OSError("injected state directory fsync failure")
+        return actual_fsync(fd)
+    monkeypatch.setattr(reload.os, "replace", replace_file)
+    monkeypatch.setattr(reload.os, "fsync", fsync_file)
+    try:
+        result = rig.operation.execute()
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+    assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == original_mask
+    if failure == "handled-signal":
+        assert signal_observed_consistent_pin == [True]
+    assert renamed and injected
+    assert not result["ok"] and result["rolled_back"]
+    assert ("stop", 21) in rig.hooks.calls
+    assert ("start", "rollback") in rig.hooks.calls
+    assert rig.current.resolve() == rig.paths.rollback_release
+    assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+    expected = dict(rig.original, processes=dict(rig.original["processes"],
+                    services=ProcessIdentity(22, "new", 22, "a" * 32).to_dict()))
+    assert rig.store.load() == expected
+    assert rig.hooks.active and result["watchdog_restored"]
+
+
+@pytest.mark.parametrize("replacement", ["different-inode", "changed-content", "symlink"])
+def test_publication_reconciliation_rejects_unknown_replacements(tmp_path, monkeypatch, replacement):
+    path = tmp_path / "pinned.json"
+    path.write_bytes(b"original")
+    path.chmod(0o600)
+    file = reload.PinnedFile(path)
+    old_identity = file.expected
+    actual_replace = os.replace
+    def replace_then_tamper(source, destination, **kwargs):
+        result = actual_replace(source, destination, **kwargs)
+        if replacement == "changed-content":
+            path.write_bytes(b"externally changed")
+        else:
+            # Keep the known published inode linked elsewhere to prevent inode
+            # reuse; the new authority must still be rejected even with same bytes.
+            path.rename(path.with_name("known-inode"))
+            if replacement == "symlink":
+                path.symlink_to(path.with_name("known-inode"))
+            else:
+                path.write_bytes(b"candidate")
+                path.chmod(0o600)
+        raise OSError("injected publication failure with unknown replacement")
+    monkeypatch.setattr(reload.os, "replace", replace_then_tamper)
+    try:
+        with pytest.raises(OSError, match="injected publication failure"):
+            file.replace(b"candidate")
+        assert file.expected == old_identity and file.content == b"original"
+        with pytest.raises((ValueError, OSError)):
+            file.verify()
+    finally:
+        file.close()
