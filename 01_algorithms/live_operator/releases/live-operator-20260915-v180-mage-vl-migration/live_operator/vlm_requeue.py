@@ -47,6 +47,23 @@ class RequeuePlan:
     error_text: str
     config: VLMReviewConfig = field(repr=False, compare=False)
 
+    @property
+    def intent_sha256(self) -> str:
+        """Hash the non-secret identity and predicates authorized by this plan."""
+
+        intent = {
+            "candidate_ids_sha256": self.candidate_ids_sha256,
+            "expected_evidence_revision": self.expected_evidence_revision,
+            "expected_model_version": self.expected_model_version,
+            "expected_prompt_revision": self.expected_prompt_revision,
+            "metadata_dir": str(self.metadata_dir),
+            "run_dir": str(self.run_dir),
+            "sidecar_path": str(self.sidecar_path),
+            "source_sha256": self.source_sha256,
+        }
+        canonical = json.dumps(intent, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class RequeueResult:
@@ -208,6 +225,19 @@ def _write_backup(backup_path: Path, source: bytes) -> str:
         raise VLMRequeueError("backup could not be written") from error
     finally:
         os.close(descriptor)
+    try:
+        directory = os.open(
+            backup_path.parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as error:
+        raise VLMRequeueError("backup directory could not be persisted") from error
     return hashlib.sha256(source).hexdigest()
 
 
@@ -234,6 +264,8 @@ def _write_remaining_states(path: Path, states: Mapping[str, Mapping[str, Any]])
             os.fsync(directory)
         finally:
             os.close(directory)
+    except OSError as error:
+        raise VLMRequeueError("VLM state publication could not be persisted") from error
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -277,6 +309,7 @@ def _parser() -> ArgumentParser:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--expected-source-sha256")
+    parser.add_argument("--expected-intent-sha256")
     parser.add_argument("--backup-path", type=Path)
     return parser
 
@@ -287,13 +320,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
     if arguments.apply and (
-        arguments.expected_source_sha256 is None or arguments.backup_path is None
+        arguments.expected_source_sha256 is None
+        or arguments.expected_intent_sha256 is None
+        or arguments.backup_path is None
     ):
-        parser.error("--apply requires --expected-source-sha256 and --backup-path")
+        parser.error(
+            "--apply requires --expected-source-sha256, --expected-intent-sha256, and --backup-path"
+        )
     if not arguments.apply and (
-        arguments.expected_source_sha256 is not None or arguments.backup_path is not None
+        arguments.expected_source_sha256 is not None
+        or arguments.expected_intent_sha256 is not None
+        or arguments.backup_path is not None
     ):
-        parser.error("--expected-source-sha256 and --backup-path require --apply")
+        parser.error(
+            "--expected-source-sha256, --expected-intent-sha256, and --backup-path require --apply"
+        )
     try:
         plan = plan_http500_requeue(arguments.run_dir, VLMReviewConfig.load(arguments.config))
         if not arguments.apply:
@@ -304,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
                         "source_sha256": plan.source_sha256,
                         "candidate_count": len(plan.candidate_event_ids),
                         "candidate_ids_sha256": plan.candidate_ids_sha256,
+                        "intent_sha256": plan.intent_sha256,
                     },
                     sort_keys=True,
                 )
@@ -311,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if arguments.expected_source_sha256 != plan.source_sha256:
             raise VLMRequeueError("expected source SHA256 does not match dry run")
+        if arguments.expected_intent_sha256 != plan.intent_sha256:
+            raise VLMRequeueError("expected intent SHA256 does not match dry run")
         result = apply_http500_requeue(plan, arguments.backup_path)
         print(
             json.dumps(

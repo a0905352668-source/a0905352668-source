@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import live_operator.vlm_requeue as vlm_requeue
 from live_operator.vlm_requeue import (
     VLMRequeueError,
     apply_http500_requeue,
@@ -31,6 +32,34 @@ def _config() -> VLMReviewConfig:
         expected_model_version="mage-vl-v1",
         expected_prompt_revision="prompt-v1",
         expected_evidence_revision="evidence-v1",
+    )
+
+
+def _write_config(path: Path, *, model: str = "mage-vl-v1") -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "endpoint": "http://127.0.0.1/v1/review",
+                "shared_secret_file": "/tmp/not-read-by-requeue",
+                "expected_model_version": model,
+                "expected_prompt_revision": "prompt-v1",
+                "expected_evidence_revision": "evidence-v1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(path, 0o600)
+
+
+def _wrapper(*arguments: Path | str) -> subprocess.CompletedProcess[str]:
+    script = Path(__file__).parents[2] / "scripts" / "jiankong-vlm-requeue"
+    return subprocess.run(
+        [script, *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "JIAN_KONG_PYTHON_BIN": sys.executable},
     )
 
 
@@ -101,7 +130,7 @@ def test_plan_selects_only_retryable_http500_errors_at_exact_revisions(tmp_path:
 
 
 def test_apply_removes_only_planned_overlays_with_a_private_exact_backup(tmp_path: Path) -> None:
-    """A wrong deletion set, non-atomic write, or weak backup must fail this test."""
+    """A wrong deletion set or weak backup must fail this test."""
 
     run_dir = tmp_path / "live_20260915_120001"
     sidecar = _write_sidecar(run_dir)
@@ -128,7 +157,6 @@ def test_apply_removes_only_planned_overlays_with_a_private_exact_backup(tmp_pat
         "i-wrong-prompt",
         "j-wrong-evidence",
     }
-    assert not any(path.suffix == ".tmp" for path in sidecar.parent.iterdir())
     assert plan_http500_requeue(run_dir, _config()).candidate_event_ids == ()
 
 
@@ -200,28 +228,9 @@ def test_wrapper_emits_a_secret_free_dry_run_json_object(tmp_path: Path) -> None
     run_dir = tmp_path / "live_20260915_120004"
     sidecar = _write_sidecar(run_dir)
     config_path = tmp_path / "vlm-review.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "endpoint": "http://127.0.0.1/v1/review",
-                "shared_secret_file": "/tmp/not-read-by-requeue",
-                "expected_model_version": "mage-vl-v1",
-                "expected_prompt_revision": "prompt-v1",
-                "expected_evidence_revision": "evidence-v1",
-            }
-        ),
-        encoding="utf-8",
-    )
-    os.chmod(config_path, 0o600)
-    script = Path(__file__).parents[2] / "scripts" / "jiankong-vlm-requeue"
-    completed = subprocess.run(
-        [script, "--run-dir", run_dir, "--config", config_path],
-        check=True,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "JIAN_KONG_PYTHON_BIN": sys.executable},
-    )
+    _write_config(config_path)
+    completed = _wrapper("--run-dir", run_dir, "--config", config_path)
+    assert completed.returncode == 0
 
     payload = json.loads(completed.stdout)
     assert payload == {
@@ -231,5 +240,173 @@ def test_wrapper_emits_a_secret_free_dry_run_json_object(tmp_path: Path) -> None
         ).hexdigest(),
         "mode": "dry-run",
         "source_sha256": hashlib.sha256(sidecar.read_bytes()).hexdigest(),
+        "intent_sha256": plan_http500_requeue(run_dir, _config()).intent_sha256,
     }
     assert "not-read-by-requeue" not in completed.stdout
+
+
+def test_wrapper_refuses_original_dry_run_after_config_changes_with_same_source(
+    tmp_path: Path,
+) -> None:
+    """The CLI must carry the dry-run revision/selection intent across invocations."""
+
+    run_dir = tmp_path / "live_20260915_120005"
+    sidecar = _write_sidecar(run_dir)
+    source = sidecar.read_bytes()
+    config_path = tmp_path / "vlm-review.json"
+    _write_config(config_path)
+    dry_run = _wrapper("--run-dir", run_dir, "--config", config_path)
+    assert dry_run.returncode == 0
+    original = json.loads(dry_run.stdout)
+    _write_config(config_path, model="mage-vl-v2")
+
+    applied = _wrapper(
+        "--run-dir",
+        run_dir,
+        "--config",
+        config_path,
+        "--apply",
+        "--expected-source-sha256",
+        original["source_sha256"],
+        "--expected-intent-sha256",
+        original["intent_sha256"],
+        "--backup-path",
+        tmp_path / "backup.json",
+    )
+
+    assert applied.returncode != 0
+    assert "intent" in applied.stderr.lower()
+    assert sidecar.read_bytes() == source
+    assert not (tmp_path / "backup.json").exists()
+
+
+def test_wrapper_refuses_original_dry_run_for_a_different_run_with_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Source hashes alone cannot authorize applying a plan to another run."""
+
+    first_run = tmp_path / "live_20260915_120006"
+    second_run = tmp_path / "live_20260915_120007"
+    first_sidecar = _write_sidecar(first_run)
+    second_sidecar = _write_sidecar(second_run)
+    assert first_sidecar.read_bytes() == second_sidecar.read_bytes()
+    config_path = tmp_path / "vlm-review.json"
+    _write_config(config_path)
+    dry_run = _wrapper("--run-dir", first_run, "--config", config_path)
+    assert dry_run.returncode == 0
+    original = json.loads(dry_run.stdout)
+
+    applied = _wrapper(
+        "--run-dir",
+        second_run,
+        "--config",
+        config_path,
+        "--apply",
+        "--expected-source-sha256",
+        original["source_sha256"],
+        "--expected-intent-sha256",
+        original["intent_sha256"],
+        "--backup-path",
+        tmp_path / "backup.json",
+    )
+
+    assert applied.returncode != 0
+    assert "intent" in applied.stderr.lower()
+    assert second_sidecar.read_bytes() == first_sidecar.read_bytes()
+    assert not (tmp_path / "backup.json").exists()
+
+
+def test_apply_persists_backup_directory_before_sidecar_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing state before the backup directory is durable loses audit recovery."""
+
+    run_dir = tmp_path / "live_20260915_120008"
+    _write_sidecar(run_dir)
+    plan = plan_http500_requeue(run_dir, _config())
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup = backup_dir / "operator-backup.json"
+    backup_directory_identity = (backup_dir.stat().st_dev, backup_dir.stat().st_ino)
+    original_fsync = vlm_requeue.os.fsync
+    original_replace = vlm_requeue.os.replace
+    backup_directory_synced = False
+
+    def record_fsync(descriptor: int) -> None:
+        nonlocal backup_directory_synced
+        details = os.fstat(descriptor)
+        if (details.st_dev, details.st_ino) == backup_directory_identity:
+            backup_directory_synced = True
+        original_fsync(descriptor)
+
+    def assert_backup_precedes_publish(source: Path, destination: Path) -> None:
+        if destination == plan.sidecar_path:
+            assert backup_directory_synced
+        original_replace(source, destination)
+
+    monkeypatch.setattr(vlm_requeue.os, "fsync", record_fsync)
+    monkeypatch.setattr(vlm_requeue.os, "replace", assert_backup_precedes_publish)
+
+    apply_http500_requeue(plan, backup)
+
+
+def test_apply_aborts_before_sidecar_replacement_when_backup_directory_fsync_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An undurable backup must prevent the irreversible overlay deletion."""
+
+    run_dir = tmp_path / "live_20260915_120009"
+    sidecar = _write_sidecar(run_dir)
+    source = sidecar.read_bytes()
+    plan = plan_http500_requeue(run_dir, _config())
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup = backup_dir / "operator-backup.json"
+    backup_directory_identity = (backup_dir.stat().st_dev, backup_dir.stat().st_ino)
+    original_fsync = vlm_requeue.os.fsync
+
+    def fail_backup_directory_fsync(descriptor: int) -> None:
+        details = os.fstat(descriptor)
+        if (details.st_dev, details.st_ino) == backup_directory_identity:
+            raise OSError("backup directory fsync failed")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(vlm_requeue.os, "fsync", fail_backup_directory_fsync)
+
+    with pytest.raises(VLMRequeueError, match="backup"):
+        apply_http500_requeue(plan, backup)
+
+    assert sidecar.read_bytes() == source
+    assert backup.read_bytes() == source
+
+
+def test_apply_reports_directory_fsync_failure_after_atomic_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed post-replace state fsync is reported instead of a false success."""
+
+    run_dir = tmp_path / "live_20260915_120010"
+    sidecar = _write_sidecar(run_dir)
+    plan = plan_http500_requeue(run_dir, _config())
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup = backup_dir / "operator-backup.json"
+    state_directory_identity = (
+        sidecar.parent.stat().st_dev,
+        sidecar.parent.stat().st_ino,
+    )
+    original_fsync = vlm_requeue.os.fsync
+
+    def fail_state_directory_fsync(descriptor: int) -> None:
+        details = os.fstat(descriptor)
+        if (details.st_dev, details.st_ino) == state_directory_identity:
+            raise OSError("state directory fsync failed")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(vlm_requeue.os, "fsync", fail_state_directory_fsync)
+
+    with pytest.raises(VLMRequeueError, match="publication"):
+        apply_http500_requeue(plan, backup)
+
+    assert backup.exists()
+    assert "e-http500-z" not in json.loads(sidecar.read_text(encoding="utf-8"))

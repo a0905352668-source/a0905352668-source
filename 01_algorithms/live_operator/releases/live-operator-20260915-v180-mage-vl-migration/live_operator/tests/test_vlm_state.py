@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from datetime import datetime, timezone
 
 import pytest
@@ -8,6 +10,7 @@ import pytest
 from live_operator.dashboard import DashboardApp
 from live_operator.vlm_review import VLM_EVIDENCE_REVISION
 from live_operator.vlm_state import VLMReviewStateStore
+from live_operator.vlm_state import VLMStateError
 
 
 REQUEST_ID = "a" * 64
@@ -231,3 +234,33 @@ def test_dashboard_sidecar_update_does_not_invalidate_event_index(tmp_path) -> N
     assert app._event_file_signature(dashboard) == original_signature
     assert app._indexed_records_cache is indexed_records
     assert second["events"][0]["vlm_filter_result"] == "pass"
+
+
+def test_state_store_refuses_a_symlinked_lock_without_touching_its_target(tmp_path) -> None:
+    """Following a lock symlink would let an operator chmod or lock an arbitrary file."""
+
+    state_path = tmp_path / "vlm_filter_states.json"
+    target = tmp_path / "unrelated-target"
+    target.write_bytes(b"do not touch")
+    os.chmod(target, 0o640)
+    target_before = target.stat()
+    lock_path = state_path.with_suffix(".json.lock")
+    lock_path.symlink_to(target)
+    store = VLMReviewStateStore(state_path)
+
+    with pytest.raises(VLMStateError, match="lock"):
+        store.set_vlm_filter_result(
+            {"event_id": "camera01-person01-event-lock", "status": "ready"},
+            "pending",
+            attempts=1,
+            expected_attempts=0,
+            request_id=REQUEST_ID,
+            evidence_revision=EVIDENCE,
+            prompt_revision=PROMPT,
+            model_version=MODEL,
+        )
+
+    target_after = target.stat()
+    assert target.read_bytes() == b"do not touch"
+    assert stat.S_IMODE(target_after.st_mode) == stat.S_IMODE(target_before.st_mode)
+    assert target_after.st_mtime_ns == target_before.st_mtime_ns

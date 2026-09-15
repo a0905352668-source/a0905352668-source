@@ -246,21 +246,42 @@ class VLMReviewStateStore:
         self._validate_storage()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._thread_lock:
-            with self.lock_path.open("a+b") as handle:
-                if os.name != "nt":
-                    # chmod dirties inode metadata even when the mode is
-                    # unchanged. Reads must not generate journal writes.
-                    if stat.S_IMODE(os.fstat(handle.fileno()).st_mode) != 0o600:
-                        os.fchmod(handle.fileno(), 0o600)
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    self._validate_storage()
-                    yield
-                finally:
+            descriptor: int | None = None
+            try:
+                descriptor = os.open(
+                    self.lock_path,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                )
+                details = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(details.st_mode)
+                    or (
+                        os.name != "nt"
+                        and (
+                            details.st_uid != os.geteuid()
+                            or stat.S_IMODE(details.st_mode) != 0o600
+                        )
+                    )
+                ):
+                    raise VLMStateError("VLM state lock is invalid")
+                with os.fdopen(descriptor, "a+b") as handle:
+                    descriptor = None
                     if os.name != "nt":
-                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        self._validate_storage()
+                        yield
+                    finally:
+                        if os.name != "nt":
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError as error:
+                raise VLMStateError("VLM state lock is unavailable") from error
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
 
     def _validate_storage(self) -> None:
         if self.storage_run_dir is not None:
