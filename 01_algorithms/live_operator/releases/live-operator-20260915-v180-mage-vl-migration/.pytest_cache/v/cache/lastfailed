@@ -1,0 +1,13 @@
+{
+  "live_operator/tests/test_cli.py::test_production_relay_probe_checks_all_seven_and_rejects_one_failure": true,
+  "live_operator/tests/test_cli.py::test_production_relay_probe_retries_a_source_while_mediamtx_warms_up": true,
+  "live_operator/tests/test_cli.py::test_production_relay_probe_respects_short_total_warmup_budget": true,
+  "live_operator/tests/test_cli.py::test_process_group_and_labeled_container_cleanup": true,
+  "live_operator/tests/test_cli.py::test_start_component_passes_unique_strict_owner_token_to_launcher": true,
+  "live_operator/tests/test_cli.py::test_deepstream_component_uses_long_lived_production_duration": true,
+  "live_operator/tests/test_cli.py::test_deepstream_component_launches_from_active_release": true,
+  "live_operator/tests/test_cli.py::test_runtime_verification_uses_seven_stream_stats_not_alarm_events": true,
+  "live_operator/tests/test_cli.py::test_runtime_progress_accepts_truncated_stats_after_restart": true,
+  "live_operator/tests/test_cli.py::test_stop_process_cleans_real_owned_process_group": true,
+  "live_operator/tests/test_cli.py::test_ffprobe_subprocess_reads_memfd_without_secret_argv_and_times_out": true
+}

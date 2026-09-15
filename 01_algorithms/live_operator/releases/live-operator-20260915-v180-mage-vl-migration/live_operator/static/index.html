@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>手机拍屏行为智能监测系统</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260907-v172">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>手机拍屏行为智能监测系统</h1>
+      <span class="live-mark"><i></i>实时分析</span>
+    </div>
+    <div class="run-meta">
+      <button id="camera-management-open" class="camera-management-open" type="button">
+        摄像头管理
+      </button>
+      <span id="run-updated">等待数据</span>
+    </div>
+  </header>
+
+  <section class="statusbar" aria-label="系统运行状态">
+    <div class="status-summary">
+      <span id="run-state" class="run-state is-waiting">连接中</span>
+      <span id="camera-count">正在读取摄像头状态</span>
+    </div>
+    <div id="camera-status" class="camera-list" aria-label="摄像头状态"></div>
+  </section>
+
+  <section id="system-alerts" class="system-alerts" aria-live="polite" hidden>
+    <strong id="system-alert-summary"></strong>
+    <div id="system-alert-details" class="system-alert-details"></div>
+    <button id="system-alert-close" class="system-alert-close" type="button" aria-label="关闭系统提示">×</button>
+  </section>
+
+  <main class="workspace">
+    <aside class="overview panel" aria-labelledby="overview-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="section-kicker">LIVE OVERVIEW</p>
+          <h2 id="overview-heading">事件与复核概况</h2>
+        </div>
+        <span class="refresh-note">当前筛选结果</span>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric"><strong id="event-count">0</strong><span>当前事件</span></div>
+        <div class="metric"><strong id="pending-review-count">0</strong><span>待人工复核</span></div>
+        <div class="metric"><strong id="phone-use-count">0</strong><span>确认使用手机</span></div>
+        <div class="metric"><strong id="screen-capture-count">0</strong><span>确认拍摄屏幕</span></div>
+      </div>
+      <p class="overview-view-note">涉及 <span id="view-count">0</span> 个视角</p>
+
+      <section class="filter-block" aria-labelledby="filter-heading">
+        <div class="subheading">
+          <h3 id="filter-heading">视角筛选</h3>
+          <button id="clear-filter" class="text-button" type="button" hidden>清除</button>
+        </div>
+        <div id="view-filters" class="filter-list"></div>
+      </section>
+
+      <section class="review-filter-block" aria-labelledby="review-filter-heading">
+        <div class="subheading">
+          <h3 id="review-filter-heading">复核状态</h3>
+        </div>
+        <label class="review-visibility-toggle">
+          <input id="show-false-positives" type="checkbox">
+          显示已标误报
+        </label>
+      </section>
+
+      <section class="vlm-filter-block" aria-labelledby="vlm-filter-heading">
+        <div class="subheading">
+          <h3 id="vlm-filter-heading">大模型复核</h3>
+        </div>
+        <label class="review-visibility-toggle"
+               title="显示大模型通过或人工已确认的事件；不确定、复核中、未复核、异常及明确误报事件不进入主列表">
+          <input id="exclude-vlm-filtered" type="checkbox" checked>
+          开启大模型过滤
+        </label>
+        <div id="vlm-filter-summary" class="vlm-filter-summary" aria-live="polite" hidden></div>
+      </section>
+    </aside>
+
+    <section class="event-column panel" aria-labelledby="events-heading">
+      <div class="panel-heading event-heading">
+        <div>
+          <p class="section-kicker">EVENT TIMELINE</p>
+          <h2 id="events-heading">检测时间段</h2>
+        </div>
+        <div class="event-heading-actions">
+          <span id="event-filter-label" class="selection-label">全部视角</span>
+          <button id="show-screen-captures" class="screen-capture-shortcut"
+                  type="button" aria-pressed="false"
+                  title="查看全部由人工确认为拍摄屏幕的事件">
+            <svg class="screen-capture-shortcut-icon" viewBox="0 0 24 24"
+                 aria-hidden="true" focusable="false">
+              <path class="screen-capture-shortcut-box"
+                    d="M6 3.5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"></path>
+              <path class="screen-capture-shortcut-check"
+                    d="m8 12 2.3 2.3L16 8.7"></path>
+            </svg>
+            <span id="screen-capture-shortcut-label">查看人工确认拍摄屏幕</span>
+          </button>
+        </div>
+      </div>
+      <div class="event-filter-band">
+        <div id="event-calendar" class="event-calendar">
+          <button id="calendar-trigger" class="calendar-trigger" type="button"
+                  aria-haspopup="dialog" aria-expanded="false">
+            <span id="calendar-context-label">报警日期</span>
+            <strong id="selected-date-label">暂无日期</strong>
+            <small id="daily-event-total">当日暂无事件</small>
+          </button>
+          <div id="calendar-popover" class="calendar-popover" role="dialog"
+               aria-label="选择报警日期" hidden>
+            <div class="calendar-toolbar">
+              <button id="calendar-prev" class="calendar-nav" type="button"
+                      title="上个月" aria-label="上个月">‹</button>
+              <strong id="calendar-month-label">--</strong>
+              <button id="calendar-next" class="calendar-nav" type="button"
+                      title="下个月" aria-label="下个月">›</button>
+            </div>
+            <div class="calendar-weekdays" aria-hidden="true">
+              <span>一</span><span>二</span><span>三</span><span>四</span>
+              <span>五</span><span>六</span><span>日</span>
+            </div>
+            <div id="calendar-grid" class="calendar-grid"></div>
+          </div>
+        </div>
+        <div class="hour-filter-group">
+          <span id="time-filter-label" class="filter-label">时间筛选</span>
+          <div id="hour-filters" class="hour-filters" aria-label="报警时间筛选"></div>
+        </div>
+      </div>
+      <div id="event-request-status" class="event-request-status" role="status">
+        <span id="event-request-message">正在加载事件…</span>
+        <button id="event-retry" type="button" hidden>重试</button>
+      </div>
+      <div id="latest-events" class="event-list"></div>
+      <nav id="event-pagination" class="event-pagination" aria-label="报警事件分页">
+        <button id="event-page-prev" type="button" title="上一页" aria-label="上一页">←</button>
+        <span id="event-page-label">第 0/0 页，共 0 条</span>
+        <button id="event-page-next" type="button" title="下一页" aria-label="下一页">→</button>
+      </nav>
+      <div id="event-empty" class="list-empty">正在读取事件列表，请稍候</div>
+    </section>
+
+    <section class="review panel" aria-labelledby="review-heading">
+      <div class="panel-heading review-heading">
+        <div>
+          <p id="event-camera" class="section-kicker">未选择事件</p>
+          <h2 id="review-heading">实时事件复核</h2>
+        </div>
+        <div class="display-toggles" aria-label="标注显示选项">
+          <label><input id="show-alarm-boxes" type="checkbox" checked> 报警框</label>
+          <label><input id="show-phone-boxes" type="checkbox" checked> 手机框</label>
+          <label><input id="show-context-boxes" type="checkbox" checked> 环境框</label>
+        </div>
+      </div>
+
+      <div id="video-shell" class="video-shell">
+        <div id="video-stage" class="video-stage">
+          <video id="event-video" preload="metadata" playsinline
+                 aria-label="报警事件视频"></video>
+          <div id="event-canvas" class="event-overlay" aria-label="报警目标标注"></div>
+          <div class="video-actions">
+            <button id="event-download" class="download-button" type="button" disabled
+                    title="保存仅带人物框和手机框的 MP4 视频" aria-live="polite">↓ 下载视频</button>
+            <button id="event-fullscreen" class="fullscreen-button" type="button"
+                    title="全屏显示" aria-label="全屏显示">⛶</button>
+          </div>
+          <div id="empty-state" class="empty-state">
+            <strong>等待事件视频</strong>
+            <span>报警元数据会立即显示，短视频就绪后自动加载</span>
+          </div>
+        </div>
+        <div id="fullscreen-video-controls" class="fullscreen-video-controls"
+             aria-label="视频播放控制">
+          <button id="fullscreen-play-toggle" type="button">▶ 播放</button>
+          <input id="fullscreen-progress" type="range" min="0" max="1000" value="0"
+                 aria-label="播放进度">
+          <span id="fullscreen-time">00:00 / 00:00</span>
+        </div>
+      </div>
+
+      <div id="review-actions" class="review-actions" aria-busy="false">
+        <span class="review-actions-label">人工复核</span>
+        <div class="review-controls" role="group" aria-label="人工复核结果">
+          <button type="button" data-review-result="pending" aria-pressed="false" disabled>待复核</button>
+          <button type="button" data-review-result="confirmed" data-review-category="phone_use" aria-pressed="false" disabled>使用手机</button>
+          <button type="button" data-review-result="confirmed" data-review-category="screen_capture" aria-pressed="false" disabled>拍摄屏幕</button>
+          <button type="button" data-review-result="false_positive" aria-pressed="false" disabled>标记误报</button>
+        </div>
+        <button id="fixed-object-manager-open" class="fixed-object-manager-open" type="button">
+          固定手机管理
+        </button>
+        <p id="review-error" class="review-error" role="status" aria-live="polite" hidden></p>
+      </div>
+
+      <details class="evidence-chain" aria-labelledby="evidence-chain-title">
+        <summary class="evidence-chain-heading">
+          <h4 id="evidence-chain-title">判定依据 <small>展开查看</small></h4>
+          <span id="evidence-chain-status" class="evidence-chain-status">等待事件</span>
+        </summary>
+        <div id="evidence-chain-list" class="evidence-chain-list" aria-live="polite"></div>
+      </details>
+
+    </section>
+  </main>
+
+  <dialog id="false-positive-dialog" class="review-dialog" aria-labelledby="false-positive-title">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">误报分类</p>
+          <h2 id="false-positive-title">请选择误报原因</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+      </div>
+      <p class="dialog-help">分类结果会和原视频、事件数据一起保存，用于后续修正规则和模型。</p>
+      <div class="reason-options">
+        <button type="button" data-false-positive-reason="fixed_phone">
+          <strong>固定位置手机</strong>
+          <span>确实有手机，但长期放在桌面等固定位置；使用当前报警手机框生成 3 张环境模板。</span>
+        </button>
+        <button type="button" data-false-positive-reason="model_misdetect">
+          <strong>模型错误识别</strong>
+          <span>画面中没有手机，PhoneDet 将其他物体误识别为手机。</span>
+        </button>
+        <button type="button" data-false-positive-reason="non_screen_use">
+          <strong>手机在附近但未使用</strong>
+          <span>画面中确有手机，但目标人员没有查看、操作、通话或拍摄行为。</span>
+        </button>
+        <button type="button" data-false-positive-reason="phone_call">
+          <strong>电话通话</strong>
+          <span>手机持续贴近耳朵或脸部，属于通话姿态而非拍摄屏幕。</span>
+        </button>
+        <button type="button" data-false-positive-reason="other">
+          <strong>其他原因</strong>
+          <span>不属于以上情况，仅归档事件，暂不自动加入训练预标注。</span>
+        </button>
+      </div>
+      <div class="dialog-actions">
+        <button value="cancel">取消</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="fixed-object-dialog" class="review-dialog fixed-object-dialog"
+          aria-labelledby="fixed-object-title">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">人工确认规则</p>
+          <h2 id="fixed-object-title">固定手机模板</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+      </div>
+      <p class="dialog-help">模板只保存已人工确认的固定手机位置。删除后，该模板不会再参与后续规则验证。</p>
+      <div id="fixed-object-list" class="fixed-object-list"></div>
+      <p id="fixed-object-empty" class="dialog-empty">暂无固定手机模板</p>
+      <p id="fixed-object-error" class="review-error" role="status" hidden></p>
+      <div class="dialog-actions">
+        <button value="cancel">关闭</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="camera-management-dialog" class="review-dialog camera-management-dialog"
+          aria-labelledby="camera-management-title">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">SYSTEM CONFIGURATION</p>
+          <h2 id="camera-management-title">摄像头与屏幕标定</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+      </div>
+      <p id="camera-management-help" class="dialog-help">
+        修改先保存为待发布草稿，不会影响当前实时推理。确认“应用并重启”后，系统会先连通性预检，再一次性切换；最多可同时启用 15 路。
+      </p>
+      <p id="camera-management-status" class="camera-management-status" role="status"></p>
+      <section class="camera-management-overview" aria-label="摄像头标定总览">
+        <div id="camera-management-summary" class="camera-management-summary"></div>
+        <div id="camera-management-filters" class="camera-management-filters" role="group"
+             aria-label="按标定状态筛选摄像头">
+          <button type="button" data-camera-management-filter="all" aria-pressed="true">全部</button>
+          <button type="button" data-camera-management-filter="needs_calibration" aria-pressed="false">待标定</button>
+          <button type="button" data-camera-management-filter="complete" aria-pressed="false">已标定</button>
+          <button type="button" data-camera-management-filter="disabled" aria-pressed="false">未启用</button>
+        </div>
+      </section>
+      <div id="camera-management-list" class="camera-management-list"></div>
+      <div class="camera-management-actions">
+        <button id="camera-management-add" type="button">＋ 新增摄像头</button>
+        <span></span>
+        <button id="camera-management-discard" type="button">放弃草稿</button>
+        <button id="camera-management-save" class="primary" type="button">保存待发布配置</button>
+        <button id="camera-management-publish" class="primary" type="button">应用并重启</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="screen-calibration-dialog" class="review-dialog screen-calibration-dialog"
+          aria-labelledby="screen-calibration-title">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p id="screen-calibration-camera" class="section-kicker">CAMERA</p>
+          <h2 id="screen-calibration-title">屏幕位置标定</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+      </div>
+      <p class="dialog-help">拖动红色顶点修改已有屏幕；双击画面新增顶点。新增屏幕使用“新增屏幕”，选中后可删除。保存后会自动重新生成屏幕附近和危险区域。</p>
+      <div id="screen-calibration-stage" class="screen-calibration-stage">
+        <img id="screen-calibration-image" alt="摄像头当前标定画面">
+        <canvas id="screen-calibration-canvas" aria-label="可编辑屏幕位置"></canvas>
+        <div id="screen-calibration-loading" class="screen-calibration-loading">正在读取当前画面…</div>
+      </div>
+      <div class="screen-calibration-controls">
+        <label>当前屏幕
+          <select id="screen-calibration-select" aria-label="当前屏幕"></select>
+        </label>
+        <button id="screen-calibration-add" type="button">＋ 新增屏幕</button>
+        <button id="screen-calibration-remove" type="button">删除当前屏幕</button>
+        <button id="screen-calibration-reset" type="button">恢复本次编辑前</button>
+      </div>
+      <p id="screen-calibration-error" class="review-error screen-calibration-error" role="status" hidden></p>
+      <div class="dialog-actions">
+        <button value="cancel">取消</button>
+        <button id="screen-calibration-save" class="primary" type="button">保存到摄像头草稿</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="review-toast" class="review-toast" role="status" aria-live="polite" hidden>
+    <span id="review-toast-message">已标记误报并从事件列表隐藏</span>
+    <button id="review-toast-undo" type="button">撤销</button>
+  </div>
+
+  <script src="/static/app.js?v=20260907-v172" defer></script>
+</body>
+</html>

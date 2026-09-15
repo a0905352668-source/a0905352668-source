@@ -1,0 +1,28 @@
+FROM nvcr.io/nvidia/deepstream:7.0-samples-multiarch
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_HOME=/usr/local/cuda-12.2
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        pkg-config \
+        cuda-nvcc-12-2 \
+        libopencv-dev \
+        nlohmann-json3-dev \
+        libgstreamer1.0-dev \
+        libgstreamer-plugins-base1.0-dev \
+    && apt-get install -y --no-install-recommends --reinstall \
+        libavcodec58 \
+        libavutil56 \
+        libmpg123-0 \
+        libde265-0 \
+        libx265-199 \
+        libvpx7 \
+        libx264-163 \
+    && ldconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
