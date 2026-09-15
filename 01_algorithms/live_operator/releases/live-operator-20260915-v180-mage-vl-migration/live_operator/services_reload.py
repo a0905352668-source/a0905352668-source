@@ -13,9 +13,10 @@ import re
 import signal
 import stat
 import subprocess
-import tempfile
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,9 @@ from live_operator.config import LiveConfig
 from live_operator.processes import ProcessIdentity, StateStore, capture_identity, is_same_process
 from live_operator.vlm_review import DEFAULT_VLM_REVIEW_CONFIG, VLMReviewConfig
 from live_operator.watchdog import probe_port
+from live_operator.reload_files import (
+    PinnedDirectory, PinnedFile, ReloadStateStore, ReloadTransactionLock, identity as file_identity, regular,
+)
 
 
 @dataclass(frozen=True)
@@ -52,56 +56,62 @@ class LaunchContext:
 
 
 def _regular(path: Path) -> bytes:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    file = PinnedFile(path)
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise LifecycleError("expected a regular non-symlink file")
-        with os.fdopen(descriptor, "rb") as handle:
-            descriptor = -1
-            return handle.read()
+        return file.content
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        file.close()
 
 
-def _atomic_file(path: Path, content: bytes, metadata: os.stat_result) -> None:
-    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(name)
+@contextmanager
+def _service_user(context: LaunchContext):
+    """Runtime helpers may write only with the existing unprivileged credentials.
+
+    Effective-ID switching is limited to this single-threaded reload process.
+    Restoring root occurs before any publication or systemd operation.
+    """
+    if os.geteuid() == context.uid and os.getegid() == context.gid:
+        yield
+        return
+    if os.geteuid() != 0 or context.uid == 0 or threading.active_count() != 1:
+        raise LifecycleError("runtime write requires a single-threaded service-owner context")
+    old_gid, old_groups = os.getegid(), os.getgroups()
     try:
-        os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode))
-        if os.geteuid() == 0:
-            os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
-        with os.fdopen(descriptor, "wb") as handle:
-            descriptor = -1
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.setgroups(context.groups)
+        os.setegid(context.gid)
+        os.seteuid(context.uid)
+        yield
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        temporary.unlink(missing_ok=True)
-
-
-def _atomic_link(path: Path, target: str | Path) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-    try:
-        temporary.symlink_to(target)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+        os.seteuid(0)
+        os.setegid(old_gid)
+        os.setgroups(old_groups)
 
 
 class ReloadHooks(RuntimeHooks):
     """External process and systemd boundary; never exposes component selection."""
 
+    trusted_uid = 0
+
     def __init__(self):
         super().__init__()
         self.children: dict[int, subprocess.Popen] = {}
 
+    @contextmanager
+    def transaction_lock(self):
+        if os.geteuid() != 0:
+            raise LifecycleError("reload requires root")
+        # /run is a canonical, root-controlled directory; no caller-selected lock.
+        with PinnedDirectory(Path("/run"), trusted_owner=0) as run:
+            try:
+                os.mkdir("jiankong-services-reload", mode=0o700, dir_fd=run.fd)
+            except FileExistsError:
+                pass
+        with ReloadTransactionLock(Path("/run/jiankong-services-reload/transaction.lock")):
+            yield
+
     @staticmethod
     def _systemctl(*arguments: str) -> str:
-        result = subprocess.run(["systemctl", *arguments],
+        result = subprocess.run(["/usr/bin/systemctl", *arguments],
                                 capture_output=True, text=True, timeout=30, check=False)
         if result.returncode:
             raise LifecycleError("watchdog systemctl operation failed")
@@ -133,8 +143,14 @@ class ReloadHooks(RuntimeHooks):
         if not is_same_process(identity):
             return False
         try:
-            raw = Path(f"/proc/{identity.pid}/stat").read_text()
-            return raw[raw.rfind(")") + 2:].split()[0] not in {"Z", "X"}
+            proc = Path(f"/proc/{identity.pid}")
+            raw = (proc / "stat").read_text()
+            entries = (proc / "environ").read_bytes().split(b"\0")
+            owners = [entry for entry in entries if entry.startswith(b"JIAN_KONG_OWNER_TOKEN=")]
+            return (raw[raw.rfind(")") + 2:].split()[0] not in {"Z", "X"}
+                    and identity.pgid == os.getpgid(identity.pid)
+                    and owners == [f"JIAN_KONG_OWNER_TOKEN={identity.owner_token}".encode()]
+                    and is_same_process(identity))
         except (OSError, IndexError):
             return False
 
@@ -155,29 +171,98 @@ class ReloadHooks(RuntimeHooks):
             raise LifecycleError("services environment ownership mismatch")
         command = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
         expected = ["-m", "live_operator.cli", "_services", "--run-dir", str(run_dir), "--config", str(config)]
-        if command[1:] != expected:
+        actual = command[1:]
+        if actual and actual[0] == "-P":
+            actual = actual[1:]
+        if actual != expected:
             raise LifecycleError("services launch command does not match requested run/config")
         LiveConfig.load(config)
         if not self.alive(identity):
             raise LifecycleError("services identity changed while capturing environment")
-        return LaunchContext(environment, os.readlink(proc / "exe"), os.readlink(proc / "cwd"),
-                             details.st_uid, details.st_gid, groups)
+        self.context = LaunchContext(environment, os.readlink(proc / "exe"), os.readlink(proc / "cwd"),
+                                     details.st_uid, details.st_gid, groups)
+        with self.open_services_log(run_dir, self.context):
+            pass
+        return self.context
+
+    @staticmethod
+    def _environment(release, context):
+        return dict(context.environment, PYTHONPATH=str(release), PYTHONSAFEPATH="1")
+
+    def validate_resolution(self, release, context):
+        result = subprocess.run(
+            [context.python, "-P", "-c", "import importlib.util,json; print(json.dumps(importlib.util.find_spec('live_operator.cli').origin))"],
+            env=self._environment(release, context), cwd=context.cwd,
+            user=context.uid, group=context.gid, extra_groups=context.groups,
+            capture_output=True, text=True, timeout=15, check=False)
+        if result.returncode:
+            raise LifecycleError("safe-path module resolution failed")
+        origin = Path(json.loads(result.stdout))
+        if origin != release / "live_operator" / "cli.py":
+            raise LifecycleError("services module resolved outside the selected release")
+        return str(origin)
+
+    def block_new_events(self, owner):
+        if not re.fullmatch(r"[0-9a-f]{32}", owner):
+            raise LifecycleError("invalid service owner")
+        requested_at = time.time()
+        metadata = self._storage_for_run(self.run_dir).metadata_dir
+        # Never reuse the old predictable .stop_events.tmp. Even a malicious
+        # runtime layout cannot turn this write into a privileged root write.
+        with _service_user(self.context), PinnedDirectory(metadata) as directory:
+            name = f".stop_events.{uuid.uuid4().hex}.tmp"
+            fd = -1
+            try:
+                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory.fd)
+                with os.fdopen(fd, "w") as stream:
+                    fd = -1
+                    json.dump({"service_instance": owner, "requested_at": requested_at}, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                directory.verify()
+                os.replace(name, ".stop_events", src_dir_fd=directory.fd, dst_dir_fd=directory.fd)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                try:
+                    os.unlink(name, dir_fd=directory.fd)
+                except FileNotFoundError:
+                    pass
+        return requested_at
+
+    def drain_clips(self, *args):
+        with _service_user(self.context):
+            return super().drain_clips(*args)
+
+    def http_self_check(self):
+        # The inherited Range self-check creates a runtime clip fixture.
+        with _service_user(self.context):
+            return super().http_self_check()
+
+    def open_services_log(self, run_dir, context):
+        with PinnedDirectory(run_dir / "logs") as logs:
+            fd = os.open("services.log", os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=logs.fd)
+            try:
+                details = os.fstat(fd)
+                regular(details)
+                if (details.st_uid != context.uid or details.st_gid != context.gid
+                        or stat.S_IMODE(details.st_mode) & 0o022):
+                    raise LifecycleError("services log must retain its exact service owner and safe mode")
+                logs.verify()
+                return os.fdopen(fd, "ab", buffering=0)
+            except BaseException:
+                os.close(fd)
+                raise
 
     def start_services(self, release: Path, run_dir: Path, config: Path,
                        context: LaunchContext) -> ProcessIdentity:
-        environment = dict(context.environment)
-        environment["PYTHONPATH"] = str(release)
+        environment = self._environment(release, context)
         owner = uuid.uuid4().hex
         environment["JIAN_KONG_OWNER_TOKEN"] = owner
-        logs = run_dir / "logs"
-        logs.mkdir(parents=True, exist_ok=True)
-        if os.geteuid() == 0:
-            os.chown(logs, context.uid, context.gid)
-        with (logs / "services.log").open("ab", buffering=0) as log:
-            if os.geteuid() == 0:
-                os.fchown(log.fileno(), context.uid, context.gid)
+        self.context = context
+        with self.open_services_log(run_dir, context) as log:
             child = subprocess.Popen(
-                [context.python, "-m", "live_operator.cli", "_services", "--run-dir", str(run_dir),
+                [context.python, "-P", "-m", "live_operator.cli", "_services", "--run-dir", str(run_dir),
                  "--config", str(config)], stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, env=environment, cwd=context.cwd, start_new_session=True,
                 user=context.uid, group=context.gid, extra_groups=context.groups)
@@ -202,6 +287,8 @@ class ReloadHooks(RuntimeHooks):
         child = self.children.get(identity.pid)
         if child is not None:
             child.poll()  # Reap before the inherited start-token check sees a zombie.
+        if is_same_process(identity) and not self.alive(identity):
+            raise LifecycleError("refusing to signal services with changed live ownership")
         self.stop_component("services", identity)
         if child is not None:
             child.wait(timeout=5)
@@ -228,6 +315,38 @@ class ServicesReload:
         self.store = store
         self.paths = paths
         self.hooks = hooks or ReloadHooks()
+        self._pins = []
+
+    def _pin(self, value):
+        self._pins.append(value)
+        return value
+
+    def _verify_releases(self, release):
+        self.release_parent.verify()
+        self.selector_parent.verify()
+        for pin in self.release_pins[release]:
+            pin.verify()
+
+    def _pin_release(self, release):
+        directory = self._pin(PinnedDirectory(release, trusted_owner=self.hooks.trusted_uid))
+        pins = [directory]
+        # Imported package directories and files must also be immutable to the
+        # unprivileged services owner, including pre-existing bytecode caches.
+        package = release / "live_operator"
+        for root, dirs, files in os.walk(package, followlinks=False):
+            parent = self._pin(PinnedDirectory(Path(root), trusted_owner=self.hooks.trusted_uid))
+            pins.append(parent)
+            for name in dirs:
+                if (Path(root) / name).is_symlink():
+                    raise LifecycleError("release package contains a directory symlink")
+            for name in files:
+                file = self._pin(PinnedFile(Path(root) / name, parent=parent))
+                if file.metadata.st_uid != self.hooks.trusted_uid or stat.S_IMODE(file.metadata.st_mode) & 0o022:
+                    raise LifecycleError("release package is not trusted and immutable")
+                pins.append(file)
+        if not any(isinstance(pin, PinnedFile) and pin.path == package / "cli.py" for pin in pins):
+            raise LifecycleError("release package is missing cli.py")
+        return pins
 
     def _preserved(self) -> None:
         state = self.store.load()
@@ -242,31 +361,46 @@ class ServicesReload:
         if not self.hooks.alive(self.service):
             raise LifecycleError("services identity is not alive")
 
+    def _stop_services(self):
+        for name in ("mediamtx", "deepstream"):
+            preserved = self.before[name]
+            if (self.service.pid == preserved.pid or self.service.pgid == preserved.pgid
+                    or self.service.owner_token == preserved.owner_token):
+                raise LifecycleError("services identity aliases a preserved component")
+        self.hooks.stop_services(self.service)
+        if self.hooks.alive(self.service):
+            raise LifecycleError("services stop unproven")
+
     def _publish(self, release: Path, content: bytes, target: str | Path) -> None:
         self._preserved()
-        # Sources and CA contents are captured before blocking; CA files are immutable.
+        self._verify_releases(release)
         self._verify_ca(release)
-        _atomic_file(self.live_vlm, content, self.live_metadata)
-        _atomic_link(self.current, target)
+        self.live_file.replace(content)
+        self.selector.replace_link(target)
 
     def _verify_ca(self, release: Path) -> None:
         # A broken candidate trust file must not prevent restoring the old trust domain.
-        paths = self.ca_contents if release == self.paths.candidate_release else (self.paths.rollback_ca,)
+        paths = self.ca_files if release == self.paths.candidate_release else (self.paths.rollback_ca,)
         for path in paths:
-            if _regular(path) != self.ca_contents[path]:
-                raise LifecycleError("immutable CA changed")
+            self.ca_files[path].verify()
 
     def _verify_domain(self, release: Path) -> None:
         expected = self.candidate_bytes if release == self.paths.candidate_release else self.rollback_bytes
-        if self.current.resolve() != release.resolve() or _regular(self.live_vlm) != expected:
+        self._verify_releases(release)
+        self.selector.verify()
+        if self.current.resolve() != release or self.live_file.verify() != expected:
             raise LifecycleError("published release/configuration changed")
-        if _regular(self.paths.config) != self.live_config_bytes:
+        if self.operator_file.verify() != self.live_config_bytes:
             raise LifecycleError("live operator configuration changed")
         self._verify_ca(release)
 
     def _start_ready_save(self, release: Path) -> None:
+        self._verify_releases(release)
         self.hooks.wait_port(self._preserved)
         self._preserved()
+        self._verify_releases(release)
+        self.hooks.validate_resolution(release, self.context)
+        self._verify_releases(release)
         self.service = self.hooks.start_services(release, self.run_dir, self.paths.config, self.context)
         self._all_alive()
         self.hooks.http_self_check()
@@ -274,10 +408,6 @@ class ServicesReload:
         self._verify_domain(release)
         updated = dict(self.original, processes=dict(self.original["processes"], services=self.service.to_dict()))
         self.store.save(updated)
-        # StateStore's atomic replacement is still inside its lock; restore the
-        # original file owner before the watchdog can read it as that Unix user.
-        if os.geteuid() == 0:
-            os.chown(self.store.path, self.state_metadata.st_uid, self.state_metadata.st_gid)
         if self.store.load() != updated:
             raise LifecycleError("services identity persistence unproven")
 
@@ -294,7 +424,7 @@ class ServicesReload:
                 self._all_alive()
                 path = self.hooks._storage_for_run(self.run_dir).metadata_dir / "worker_status.json"
                 try:
-                    value = json.loads(path.read_text())
+                    value = json.loads(_regular(path))
                     updated = value["updated_at"]
                     active = value["active"]
                     if (value["service_instance"] == self.service.owner_token and value["accepting"] is False
@@ -315,52 +445,67 @@ class ServicesReload:
         self.original = self.store.load()
         if not self.original or self.original.get("state") != "running":
             raise LifecycleError("operator state must be running")
-        self.state_metadata = self.store.path.stat()
         self.before = {name: ProcessIdentity.from_value(self.original["processes"][name])
                        for name in ("mediamtx", "deepstream", "services")}
+        if len({item.pid for item in self.before.values()}) != 3 or len({item.owner_token for item in self.before.values()}) != 3:
+            raise LifecycleError("component identities and owner tokens must be distinct")
         for identity in self.before.values():
             if (identity.pid <= 0 or identity.pgid != identity.pid or
                     not re.fullmatch(r"[0-9a-f]{32}", identity.owner_token or "") or
                     not self.hooks.alive(identity)):
                 raise LifecycleError("all three owned identities must be alive")
         self.service = self.before["services"]
-        for release in (p.candidate_release, p.rollback_release):
-            if not release.is_absolute() or release.is_symlink() or not release.is_dir():
-                raise LifecycleError("release must be a real non-symlink directory")
-            _regular(release / "live_operator" / "cli.py")
-        if p.candidate_release.parent.resolve() != p.rollback_release.parent.resolve():
+        if p.candidate_release.parent != p.rollback_release.parent:
             raise LifecycleError("releases must share their releases parent")
-        if p.candidate_release.resolve() == p.rollback_release.resolve():
+        if p.candidate_release == p.rollback_release:
             raise LifecycleError("candidate and rollback must differ")
         canonical_current = p.rollback_release.parent.parent / "current"
         self.current = p.current or canonical_current
-        if self.current.absolute() != canonical_current.absolute() or not self.current.is_symlink():
+        if self.current != canonical_current:
             raise LifecycleError("current must be the sibling release selector symlink")
-        self.old_target = os.readlink(self.current)
-        if self.current.resolve() != p.rollback_release.resolve():
+        self.selector_parent = self._pin(PinnedDirectory(self.current.parent, trusted_owner=self.hooks.trusted_uid))
+        self.release_parent = self._pin(PinnedDirectory(p.rollback_release.parent, trusted_owner=self.hooks.trusted_uid))
+        self.release_pins = {release: self._pin_release(release) for release in (p.candidate_release, p.rollback_release)}
+        self.selector = self._pin(PinnedFile(self.current, symlink=True))
+        self.old_target = self.selector.content
+        if self.current.resolve() != p.rollback_release:
             raise LifecycleError("current does not select rollback release")
         self.run_dir = Path(self.original["run_dir"])
         self.hooks.run_dir = self.run_dir
         self.context = self.hooks.launch_context(self.service, p.config, self.run_dir)
-        self.live_config_bytes = _regular(p.config)
+        self.operator_file = self._pin(PinnedFile(p.config))
+        self.live_config_bytes = self.operator_file.content
         configured = self.context.environment.get("JIAN_KONG_VLM_REVIEW_CONFIG", str(DEFAULT_VLM_REVIEW_CONFIG))
         self.live_vlm = Path(configured)
         if not self.live_vlm.is_absolute() or (p.live_vlm_config is not None and p.live_vlm_config != self.live_vlm):
             raise LifecycleError("live VLM path disagrees with owned services environment/default")
-        self.candidate_bytes = _regular(p.candidate_vlm_config)
-        self.rollback_bytes = _regular(p.rollback_vlm_config)
-        if _regular(self.live_vlm) != self.rollback_bytes:
+        self.candidate_file = self._pin(PinnedFile(p.candidate_vlm_config))
+        self.rollback_file = self._pin(PinnedFile(p.rollback_vlm_config))
+        self.live_file = self._pin(PinnedFile(self.live_vlm))
+        self.candidate_bytes = self.candidate_file.content
+        self.rollback_bytes = self.rollback_file.content
+        if self.live_file.content != self.rollback_bytes:
             raise LifecycleError("rollback configuration is not the current live configuration")
-        self.live_metadata = self.live_vlm.stat()
+        self.live_metadata = self.live_file.metadata
         if stat.S_IMODE(self.live_metadata.st_mode) != 0o600:
             raise LifecycleError("live VLM configuration must retain private 0600 mode")
-        if self.live_vlm in {p.candidate_vlm_config, p.rollback_vlm_config, p.candidate_ca, p.rollback_ca}:
-            raise LifecycleError("live VLM target must not alias immutable sources")
-        for config_path, ca_path in ((p.candidate_vlm_config, p.candidate_ca), (p.rollback_vlm_config, p.rollback_ca)):
-            config = VLMReviewConfig.load(config_path)
+        self.ca_files = {path: self._pin(PinnedFile(path)) for path in (p.candidate_ca, p.rollback_ca)}
+        files = [self.candidate_file, self.rollback_file, self.live_file, self.operator_file,
+                 self.store.file, *self.ca_files.values()]
+        if len(self.ca_files) != 2 or len({file_identity(file.metadata) for file in files}) != len(files):
+            raise LifecycleError("CA files, sources, state and live targets must be distinct file authorities")
+        for file, ca_path in ((self.candidate_file, p.candidate_ca), (self.rollback_file, p.rollback_ca)):
+            if stat.S_IMODE(file.metadata.st_mode) != 0o600:
+                raise LifecycleError("VLM source configuration must be private 0600")
+            config = VLMReviewConfig.from_payload(json.loads(file.content))
             if not ca_path.is_absolute() or config.tls_ca_file != ca_path:
                 raise LifecycleError("VLM configuration must reference its exact immutable CA argument")
-        self.ca_contents = {path: _regular(path) for path in (p.candidate_ca, p.rollback_ca)}
+        for file in files:
+            file.verify()
+        for release in (p.candidate_release, p.rollback_release):
+            self._verify_releases(release)
+            self.hooks.validate_resolution(release, self.context)
+            self._verify_releases(release)
         if not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", p.watchdog_unit):
             raise LifecycleError("watchdog unit must be a service unit name")
         watchdog = self.hooks.watchdog_state(p.watchdog_unit)
@@ -371,55 +516,93 @@ class ServicesReload:
         self._all_alive()
         return watchdog["ActiveState"] == "active"
 
+    def _rollback(self, receipt):
+        errors = {}
+        def attempt(stage, operation):
+            try:
+                operation()
+                return True
+            except BaseException as error:
+                errors[stage] = type(error).__name__
+                return False
+        stopped = attempt("stop", self._stop_services)
+        # These attempts are deliberately independent of stop and of the other
+        # publication. A lost preserved identity cannot strand candidate files.
+        config_restored = attempt("config", lambda: self.live_file.replace(self.rollback_bytes, restore=True))
+        def restore_current():
+            self._verify_releases(self.paths.rollback_release)
+            self.selector.replace_link(self.old_target, restore=True)
+        current_restored = attempt("current", restore_current)
+        if stopped and config_restored and current_restored:
+            receipt["rolled_back"] = attempt("readiness", lambda: self._start_ready_save(self.paths.rollback_release))
+        if errors:
+            receipt["rollback_errors"] = errors
+            receipt["rollback_error"] = {"type": next(iter(errors.values()))}
+
     def execute(self) -> dict:
         receipt = {"ok": False, "rolled_back": False, "before": {}, "after": {}, "watchdog_restored": False}
-        restore = False
+        self._watchdog_restore = None
+        original_store = self.store
+        try:
+            with self.hooks.transaction_lock():
+                # Hold the root transaction lock across state lock release and
+                # watchdog restoration; state lock is always acquired second.
+                self.store = ReloadStateStore(original_store.path)
+                try:
+                    with self.store.lock():
+                        self._execute_locked(receipt)
+                finally:
+                    if self._watchdog_restore is not None:
+                        try:
+                            self.hooks.restore_watchdog(self.paths.watchdog_unit, self._watchdog_restore)
+                            receipt["watchdog_restored"] = True
+                        except BaseException as error:
+                            receipt["ok"] = False
+                            receipt["watchdog_error"] = {"type": type(error).__name__}
+        except BaseException as error:
+            receipt["ok"] = False
+            receipt["error"] = {"stage": "preflight", "type": type(error).__name__}
+        finally:
+            if self.store is not original_store:
+                self.store.close()
+                self.store = original_store
+            for pin in reversed(self._pins):
+                pin.close()
+            self._pins.clear()
+        return receipt
+
+    def _execute_locked(self, receipt):
         blocked = False
         stage = "preflight"
+        self._watchdog_restore = None
         try:
-            with self.store.lock():
-                was_active = self._preflight()
-                receipt["before"] = {name: identity.to_dict() for name, identity in self.before.items()}
-                restore = True  # Even a partially failed systemctl stop needs finally restoration.
-                try:
-                    stage = "watchdog_suspend"
-                    self.hooks.suspend_watchdog(self.paths.watchdog_unit)
-                    self._all_alive()
-                    stage = "drain"
-                    blocked = True  # A marker write failure can occur after its atomic replace.
-                    requested_at = self.hooks.block_new_events(self.service.owner_token)
-                    self._drain(requested_at)
-                    stage = "candidate"
-                    self.hooks.stop_services(self.service)
-                    self._publish(self.paths.candidate_release, self.candidate_bytes, self.paths.candidate_release)
-                    self._start_ready_save(self.paths.candidate_release)
-                    receipt["ok"] = True
-                except BaseException as error:
-                    receipt["error"] = {"stage": stage, "type": type(error).__name__}
-                    if blocked:
-                        try:
-                            self.hooks.stop_services(self.service)
-                            self._publish(self.paths.rollback_release, self.rollback_bytes, self.old_target)
-                            self._start_ready_save(self.paths.rollback_release)
-                            receipt["rolled_back"] = True
-                        except BaseException as rollback_error:
-                            receipt["rollback_error"] = {"type": type(rollback_error).__name__}
-                    receipt["ok"] = False
-                finally:
-                    receipt["after"] = (self.store.load() or {}).get("processes", {})
+            was_active = self._preflight()
+            receipt["before"] = {name: identity.to_dict() for name, identity in self.before.items()}
+            self._watchdog_restore = was_active
+            stage = "watchdog_suspend"
+            self.hooks.suspend_watchdog(self.paths.watchdog_unit)
+            self._all_alive()
+            stage = "drain"
+            blocked = True  # A marker write failure can occur after its atomic replace.
+            requested_at = self.hooks.block_new_events(self.service.owner_token)
+            self._drain(requested_at)
+            stage = "candidate"
+            self._verify_releases(self.paths.candidate_release)
+            self._stop_services()
+            self._publish(self.paths.candidate_release, self.candidate_bytes, self.paths.candidate_release)
+            self._start_ready_save(self.paths.candidate_release)
+            receipt["ok"] = True
         except BaseException as error:
             receipt["ok"] = False
             receipt["error"] = {"stage": stage, "type": type(error).__name__}
+            if blocked:
+                self._rollback(receipt)
         finally:
-            if restore:
-                try:
-                    self.hooks.restore_watchdog(self.paths.watchdog_unit, was_active)
-                    receipt["watchdog_restored"] = True
-                except BaseException as error:
-                    receipt["ok"] = False
-                    receipt["watchdog_error"] = {"type": type(error).__name__}
-        # Never include config, environment, command lines or arbitrary exception text.
-        return receipt
+            try:
+                receipt["after"] = (self.store.load() or {}).get("processes", {})
+            except BaseException as error:
+                receipt["ok"] = False
+                receipt["state_error"] = {"type": type(error).__name__}
 
 
 def main(argv: list[str] | None = None) -> int:

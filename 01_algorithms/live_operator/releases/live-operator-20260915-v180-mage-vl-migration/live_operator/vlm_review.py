@@ -213,6 +213,11 @@ class VLMReviewConfig:
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
+        return cls.from_payload(payload)
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "VLMReviewConfig":
+        """Validate an already-captured configuration without reopening its path."""
         if not isinstance(payload, dict) or payload.get("schema_version") != 1:
             raise ValueError("invalid VLM review configuration schema")
         if payload.get("enabled", True) is not True:

@@ -3,5 +3,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${JIAN_KONG_PYTHON_BIN:-/home/boshi/miniconda3/bin/python}"
-export PYTHONPATH="${RELEASE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-exec "${PYTHON_BIN}" -m live_operator.services_reload "$@"
+export PYTHONPATH="${RELEASE_ROOT}"
+export PYTHONSAFEPATH=1
+exec "${PYTHON_BIN}" -P -m live_operator.services_reload "$@"

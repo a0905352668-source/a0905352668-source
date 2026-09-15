@@ -5,6 +5,10 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
+from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +29,15 @@ class FakeHooks:
         self.active = True
         self.kill_mode = "process"
         self.exec_stop = ""
+        self.trusted_uid = os.getuid()
+
+    @contextmanager
+    def transaction_lock(self):
+        with reload.ReloadTransactionLock(self.live_config.parent / "reload.lock", owner=os.getuid()):
+            yield
+
+    def validate_resolution(self, release, context):
+        pass
 
     def watchdog_state(self, unit):
         return {"KillMode": self.kill_mode, "ExecStop": self.exec_stop,
@@ -43,7 +56,7 @@ class FakeHooks:
 
     def launch_context(self, identity, config, run_dir):
         return SimpleNamespace(environment={"JIAN_KONG_VLM_REVIEW_CONFIG": str(self.live_config)},
-                               python=sys.executable, cwd=str(run_dir))
+                               python=sys.executable, cwd=str(run_dir), uid=os.getuid(), gid=os.getgid(), groups=tuple(os.getgroups()))
 
     def block_new_events(self, owner):
         self.calls.append(("block", owner))
@@ -85,6 +98,7 @@ def rig(tmp_path):
         root = releases / name
         (root / "live_operator").mkdir(parents=True)
         (root / "live_operator" / "cli.py").write_text("# fixture")
+        (root / "live_operator" / "__init__.py").write_text("")
     current = tmp_path / "current"
     current.symlink_to(releases / "rollback")
     ca = tmp_path / "rollback-ca"
@@ -232,13 +246,15 @@ def test_start_preserves_original_environment_python_cwd_and_owns_new_child(tmp_
     original = {"PATH": "/old/bin", "HOME": "/home/boshi", "LANG": "C.UTF-8", "LD_LIBRARY_PATH": "/old/lib",
                 "PYTHONPATH": "/old/release", "JIAN_KONG_VLM_REVIEW_CONFIG": "/private/vlm.json",
                 "JIAN_KONG_OWNER_TOKEN": "b" * 32, "VLM_EXTRA": "secret-test-value"}
-    context = reload.LaunchContext(original, "/old/python3.13", "/original/cwd", 1000, 1000, (1000, 44))
+    context = reload.LaunchContext(original, "/old/python3.13", "/original/cwd", os.getuid(), os.getgid(), (1000, 44))
+    (tmp_path / "run" / "logs").mkdir(parents=True)
+    (tmp_path / "run" / "logs" / "services.log").touch(mode=0o600)
     identity = hooks.start_services(tmp_path / "candidate", tmp_path / "run", tmp_path / "live.json", context)
     command, options = captured[0]
-    assert command == ["/old/python3.13", "-m", "live_operator.cli", "_services", "--run-dir", str(tmp_path / "run"), "--config", str(tmp_path / "live.json")]
+    assert command == ["/old/python3.13", "-P", "-m", "live_operator.cli", "_services", "--run-dir", str(tmp_path / "run"), "--config", str(tmp_path / "live.json")]
     assert options["cwd"] == "/original/cwd" and options["start_new_session"] is True
-    assert (options["user"], options["group"], options["extra_groups"]) == (1000, 1000, (1000, 44))
-    assert options["env"] == dict(original, PYTHONPATH=str(tmp_path / "candidate"), JIAN_KONG_OWNER_TOKEN=identity.owner_token)
+    assert (options["user"], options["group"], options["extra_groups"]) == (os.getuid(), os.getgid(), (1000, 44))
+    assert options["env"] == dict(original, PYTHONPATH=str(tmp_path / "candidate"), PYTHONSAFEPATH="1", JIAN_KONG_OWNER_TOKEN=identity.owner_token)
     assert identity.owner_token != "b" * 32
     assert hooks.children[101] is child
 
@@ -313,9 +329,14 @@ def test_root_state_publication_preserves_original_state_file_owner(rig, monkeyp
     observed = []
     original = rig.store.path.stat()
     monkeypatch.setattr(reload.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(reload.os, "chown", lambda path, uid, gid: observed.append((Path(path), uid, gid)))
+    original_fchown = os.fchown
+    def fchown(fd, uid, gid):
+        observed.append((uid, gid))
+        original_fchown(fd, uid, gid)
+    monkeypatch.setattr(reload.os, "fchown", fchown)
     assert rig.operation.execute()["ok"]
-    assert (rig.store.path, original.st_uid, original.st_gid) in observed
+    assert (original.st_uid, original.st_gid) in observed
+    assert (rig.store.path.stat().st_uid, rig.store.path.stat().st_gid) == (original.st_uid, original.st_gid)
 
 
 def test_launch_context_requires_root_before_reading_process_environment(tmp_path, monkeypatch):
@@ -350,6 +371,7 @@ def test_launch_context_captures_owned_process_credentials_and_original_command(
     monkeypatch.setattr(reload.LiveConfig, "load", lambda path: object())
     hooks = reload.ReloadHooks()
     monkeypatch.setattr(hooks, "alive", lambda identity: True)
+    monkeypatch.setattr(hooks, "open_services_log", lambda *args: nullcontext())
     result = hooks.launch_context(ProcessIdentity(13, "start", 13, owner), config, run_dir)
     assert (result.python, result.cwd, result.groups) == ("/original/python3.13", "/original/cwd", (20, 44))
     assert result.uid == proc.stat().st_uid and result.gid == proc.stat().st_gid
@@ -395,3 +417,321 @@ def test_real_owned_child_is_reaped_after_services_stop():
         if child.poll() is None:
             child.kill()
         child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("alias", ["state", "lock", "parent", "hardlink"])
+def test_state_authority_rejects_aliases_before_any_watchdog_change(rig, alias):
+    original_bytes = rig.store.path.read_bytes()
+    if alias == "state":
+        linked = rig.tmp_path / "alias.json"
+        linked.symlink_to(rig.store.path)
+        rig.operation.store = StateStore(linked)
+    elif alias == "lock":
+        (rig.tmp_path / "state.json.lock").symlink_to(rig.live)
+    elif alias == "parent":
+        linked = rig.tmp_path / "alias-parent"
+        linked.symlink_to(rig.tmp_path, target_is_directory=True)
+        rig.operation.store = StateStore(linked / "state.json")
+    else:
+        os.link(rig.store.path, rig.tmp_path / "hardlink.json")
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert not rig.hooks.calls
+    assert rig.store.path.read_bytes() == original_bytes
+
+
+def test_copied_component_identity_is_rejected_before_services_stop(rig):
+    state = rig.store.load()
+    state["processes"]["services"] = state["processes"]["deepstream"].copy()
+    rig.store.save(state)
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert not any(isinstance(call, tuple) and call[0] == "stop" for call in rig.hooks.calls)
+
+
+@pytest.mark.parametrize("changed", ["group", "owner", "zombie"])
+def test_alive_checks_live_process_group_owner_and_non_zombie(tmp_path, monkeypatch, changed):
+    proc = tmp_path / "process"
+    proc.mkdir()
+    (proc / "stat").write_text("13 (services) " + ("Z" if changed == "zombie" else "S") + " rest")
+    token = "b" * 32 if changed == "owner" else "a" * 32
+    (proc / "environ").write_bytes(f"JIAN_KONG_OWNER_TOKEN={token}\0".encode())
+    original_path = Path
+    monkeypatch.setattr(reload, "Path", lambda path: proc / str(path).removeprefix("/proc/13").lstrip("/") if str(path).startswith("/proc/13") else original_path(path))
+    monkeypatch.setattr(reload, "is_same_process", lambda identity: True)
+    monkeypatch.setattr(reload.os, "getpgid", lambda pid: 14 if changed == "group" else 13)
+    assert not reload.ReloadHooks().alive(ProcessIdentity(13, "start", 13, "a" * 32))
+
+
+@pytest.mark.parametrize("attack", ["parent-link", "writable-release", "swap-release", "swap-parent"])
+def test_release_authority_is_pinned_and_revalidated(rig, attack):
+    if attack == "parent-link":
+        original = rig.paths.candidate_release.parent
+        original.rename(original.with_name("real-releases"))
+        original.symlink_to(original.with_name("real-releases"), target_is_directory=True)
+    elif attack == "writable-release":
+        rig.paths.candidate_release.chmod(0o777)
+    else:
+        original_drain = rig.hooks.drain_clips
+        def drain(*args):
+            original_drain(*args)
+            original = rig.paths.candidate_release if attack == "swap-release" else rig.paths.candidate_release.parent
+            original.rename(original.with_name("replaced"))
+            original.mkdir()
+            if attack == "swap-release":
+                (original / "live_operator").mkdir()
+                (original / "live_operator" / "cli.py").write_text("# substituted")
+        rig.hooks.drain_clips = drain
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert ("start", "candidate") not in rig.hooks.calls
+
+
+@pytest.mark.parametrize("failed_stage", ["stop", "preserved", "config", "current"])
+def test_rollback_independently_attempts_both_publications(rig, monkeypatch, failed_stage):
+    original_check = rig.hooks.http_self_check
+    def check():
+        if rig.hooks.next_pid == 21:
+            if failed_stage == "stop":
+                rig.hooks.stop_services = lambda *args: (_ for _ in ()).throw(OSError("stop failed"))
+            elif failed_stage == "preserved":
+                rig.hooks.live.remove(12)
+            elif failed_stage == "config":
+                rig.operation.live_file.replace = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("config failed"))
+            else:
+                rig.operation.selector.replace_link = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("current failed"))
+            raise LifecycleError("readiness failed")
+        original_check()
+    rig.hooks.http_self_check = check
+    result = rig.operation.execute()
+    assert not result["ok"]
+    if failed_stage != "config":
+        assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+    if failed_stage != "current":
+        assert rig.current.resolve() == rig.paths.rollback_release
+    assert result["rollback_errors"]
+    if failed_stage in {"stop", "preserved"}:
+        assert ("start", "rollback") not in rig.hooks.calls
+
+
+@pytest.mark.parametrize("alias", ["same-ca", "ca-hardlink", "source-live-hardlink", "source-parent-link"])
+def test_immutable_ca_and_config_sources_cannot_alias(rig, alias):
+    if alias == "same-ca":
+        rig.operation.paths = replace(rig.paths, candidate_ca=rig.paths.rollback_ca)
+        config = json.loads(rig.paths.candidate_vlm_config.read_text())
+        config["tls_ca_file"] = str(rig.paths.rollback_ca)
+        rig.paths.candidate_vlm_config.write_text(json.dumps(config))
+    elif alias == "ca-hardlink":
+        rig.paths.candidate_ca.unlink()
+        os.link(rig.paths.rollback_ca, rig.paths.candidate_ca)
+    elif alias == "source-live-hardlink":
+        rig.paths.rollback_vlm_config.unlink()
+        os.link(rig.live, rig.paths.rollback_vlm_config)
+    else:
+        linked = rig.tmp_path / "source-alias"
+        linked.symlink_to(rig.tmp_path, target_is_directory=True)
+        rig.operation.paths = replace(rig.paths, candidate_vlm_config=linked / "candidate-vlm")
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert ("stop", 13) not in rig.hooks.calls
+
+
+def test_old_cwd_cannot_override_candidate_python_module(tmp_path, monkeypatch):
+    old = tmp_path / "old"
+    candidate = tmp_path / "candidate"
+    for release in (old, candidate):
+        (release / "live_operator").mkdir(parents=True)
+        (release / "live_operator" / "__init__.py").write_text("")
+        (release / "live_operator" / "cli.py").write_text("# test")
+    context = reload.LaunchContext(dict(os.environ), sys.executable, str(old), os.getuid(), os.getgid(), tuple(os.getgroups()))
+    actual_run = subprocess.run
+    def run_as_current_user(command, **kwargs):
+        # Exercise the real interpreter/import behavior; macOS test user cannot
+        # set supplementary groups. Credential forwarding is asserted separately.
+        for key in ("user", "group", "extra_groups"):
+            kwargs.pop(key)
+        return actual_run(command, **kwargs)
+    monkeypatch.setattr(reload.subprocess, "run", run_as_current_user)
+    result = reload.ReloadHooks().validate_resolution(candidate, context)
+    assert Path(result).resolve() == (candidate / "live_operator" / "cli.py").resolve()
+
+
+def test_concurrent_reload_waits_through_watchdog_restoration(rig):
+    restore_entered = threading.Event()
+    release_restore = threading.Event()
+    second_seen = threading.Event()
+    order = []
+    rig.hooks.fail = "http"  # Roll back so the second operation also reaches watchdog capture.
+    original_restore = rig.hooks.restore_watchdog
+    def restore(*args):
+        restore_entered.set()
+        assert release_restore.wait(3)
+        original_restore(*args)
+        order.append("first_restored")
+    rig.hooks.restore_watchdog = restore
+    second_hooks = FakeHooks(rig.live)
+    second_hooks.live.add(22)  # First operation's successfully readied rollback child.
+    original_state = second_hooks.watchdog_state
+    def second_state(unit):
+        order.append("second_capture")
+        second_seen.set()
+        return original_state(unit)
+    second_hooks.watchdog_state = second_state
+    second = reload.ServicesReload(rig.store, rig.paths, second_hooks)
+    first_thread = threading.Thread(target=rig.operation.execute)
+    second_thread = threading.Thread(target=second.execute)
+    first_thread.start()
+    assert restore_entered.wait(3)
+    second_thread.start()
+    try:
+        assert not second_seen.wait(0.2)
+        assert second_thread.is_alive()
+    finally:
+        release_restore.set()
+        first_thread.join(3)
+        second_thread.join(3)
+    assert not first_thread.is_alive() and not second_thread.is_alive()
+    assert second_seen.is_set()
+    assert order == ["first_restored", "second_capture"]
+
+
+@pytest.mark.parametrize("attack", ["file-link", "directory-link", "hardlink", "wrong-owner", "writable"])
+def test_service_log_open_rejects_unsafe_runtime_paths_without_mutating_target(tmp_path, attack):
+    logs = tmp_path / "run" / "logs"
+    logs.mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"must remain unchanged")
+    victim.chmod(0o600)
+    log = logs / "services.log"
+    context = reload.LaunchContext({}, sys.executable, str(tmp_path), os.getuid(), os.getgid(), tuple(os.getgroups()))
+    if attack == "file-link":
+        log.symlink_to(victim)
+    elif attack == "directory-link":
+        logs.rename(logs.with_name("real-logs"))
+        logs.symlink_to(logs.with_name("real-logs"), target_is_directory=True)
+        log.write_bytes(b"must remain unchanged")
+    elif attack == "hardlink":
+        os.link(victim, log)
+    else:
+        log.write_bytes(b"must remain unchanged")
+        if attack == "wrong-owner":
+            context = replace(context, uid=os.getuid() + 1)
+        else:
+            log.chmod(0o666)
+    before = victim.stat()
+    with pytest.raises((ValueError, OSError, LifecycleError)):
+        with reload.ReloadHooks().open_services_log(tmp_path / "run", context) as stream:
+            stream.write(b"forbidden append")
+    assert victim.read_bytes() == b"must remain unchanged"
+    assert (victim.stat().st_uid, victim.stat().st_gid, victim.stat().st_mode) == (before.st_uid, before.st_gid, before.st_mode)
+
+
+def test_stop_marker_does_not_follow_predictable_temporary_symlink(tmp_path, monkeypatch):
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"leave alone")
+    (tmp_path / ".stop_events.tmp").symlink_to(victim)
+    hooks = reload.ReloadHooks()
+    hooks.run_dir = tmp_path
+    hooks.context = reload.LaunchContext({}, sys.executable, str(tmp_path), os.getuid(), os.getgid(), tuple(os.getgroups()))
+    monkeypatch.setattr(hooks, "_storage_for_run", lambda path: SimpleNamespace(metadata_dir=tmp_path))
+    requested = hooks.block_new_events("a" * 32)
+    assert victim.read_bytes() == b"leave alone"
+    assert json.loads((tmp_path / ".stop_events").read_text()) == {"service_instance": "a" * 32, "requested_at": requested}
+    assert (tmp_path / ".stop_events").stat().st_uid == os.getuid()
+
+
+def test_config_validation_uses_same_captured_bytes_as_publication(rig, monkeypatch):
+    original_bytes = rig.paths.candidate_vlm_config.read_bytes()
+    bad = json.loads(original_bytes)
+    bad["tls_ca_file"] = str(rig.paths.rollback_ca)
+    rig.paths.candidate_vlm_config.write_text(json.dumps(bad))
+    actual_file = reload.PinnedFile
+    def capture_then_replace_source(path, **kwargs):
+        file = actual_file(path, **kwargs)
+        if path == rig.paths.candidate_vlm_config:
+            rig.paths.candidate_vlm_config.write_bytes(original_bytes)
+        return file
+    monkeypatch.setattr(reload, "PinnedFile", capture_then_replace_source)
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert ("stop", 13) not in rig.hooks.calls
+    assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+
+
+def test_pinned_config_restore_never_writes_through_swapped_live_symlink(rig):
+    victim = rig.tmp_path / "victim"
+    victim.write_bytes(b"unrelated file")
+    def readiness():
+        if rig.hooks.next_pid == 21:
+            rig.live.unlink()
+            rig.live.symlink_to(victim)
+            raise LifecycleError("candidate failed")
+    rig.hooks.http_self_check = readiness
+    result = rig.operation.execute()
+    assert not result["ok"] and result["rolled_back"]
+    assert victim.read_bytes() == b"unrelated file"
+    assert not rig.live.is_symlink()
+    assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+
+
+def test_root_transaction_lock_rejects_symlink_and_hardlink(tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"untouched")
+    lock = tmp_path / "reload.lock"
+    lock.symlink_to(victim)
+    with pytest.raises(OSError):
+        with reload.ReloadTransactionLock(lock, owner=os.getuid()):
+            pytest.fail("alias lock acquired")
+    lock.unlink()
+    os.link(victim, lock)
+    with pytest.raises(ValueError):
+        with reload.ReloadTransactionLock(lock, owner=os.getuid()):
+            pytest.fail("hardlinked lock acquired")
+    assert victim.read_bytes() == b"untouched"
+
+
+def test_state_lock_replacement_during_transaction_prevents_publication(rig):
+    real_drain = rig.hooks.drain_clips
+    def drain(*args):
+        real_drain(*args)
+        lock = rig.store.path.with_suffix(".json.lock")
+        lock.rename(lock.with_suffix(".replaced"))
+        lock.touch(mode=0o600)
+    rig.hooks.drain_clips = drain
+    result = rig.operation.execute()
+    assert not result["ok"]
+    assert rig.store.load()["processes"] == rig.original["processes"]
+    assert rig.hooks.active
+
+
+def test_runtime_marker_writes_drop_to_service_credentials_and_restore_root(tmp_path, monkeypatch):
+    effective = {"uid": 0, "gid": 0, "groups": [0]}
+    monkeypatch.setattr(reload.os, "geteuid", lambda: effective["uid"])
+    monkeypatch.setattr(reload.os, "getegid", lambda: effective["gid"])
+    monkeypatch.setattr(reload.os, "getgroups", lambda: effective["groups"])
+    monkeypatch.setattr(reload.os, "seteuid", lambda uid: effective.__setitem__("uid", uid))
+    monkeypatch.setattr(reload.os, "setegid", lambda gid: effective.__setitem__("gid", gid))
+    monkeypatch.setattr(reload.os, "setgroups", lambda groups: effective.__setitem__("groups", groups))
+    writes = []
+    actual_open = os.open
+    def checked_open(path, flags, *args, **kwargs):
+        if flags & (os.O_WRONLY | os.O_RDWR):
+            writes.append((effective["uid"], effective["gid"], tuple(effective["groups"])))
+        return actual_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(reload.os, "open", checked_open)
+    hooks = reload.ReloadHooks()
+    hooks.run_dir = tmp_path
+    hooks.context = reload.LaunchContext({}, sys.executable, str(tmp_path), 1001, 1002, (1002, 44))
+    monkeypatch.setattr(hooks, "_storage_for_run", lambda path: SimpleNamespace(metadata_dir=tmp_path))
+    hooks.block_new_events("a" * 32)
+    assert writes == [(1001, 1002, (1002, 44))]
+    assert effective == {"uid": 0, "gid": 0, "groups": [0]}
+
+
+def test_privileged_systemctl_does_not_search_caller_path(monkeypatch):
+    commands = []
+    monkeypatch.setenv("PATH", "/untrusted/runtime/bin")
+    monkeypatch.setattr(reload.subprocess, "run", lambda command, **kwargs:
+                        commands.append(command) or subprocess.CompletedProcess(command, 0, stdout="active\n"))
+    assert reload.ReloadHooks._systemctl("start", "jiankong-live-watchdog.service") == "active\n"
+    assert commands == [["/usr/bin/systemctl", "start", "jiankong-live-watchdog.service"]]
