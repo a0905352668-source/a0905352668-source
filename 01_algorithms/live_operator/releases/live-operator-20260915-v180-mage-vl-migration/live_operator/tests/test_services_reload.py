@@ -24,6 +24,7 @@ from live_operator.processes import ProcessIdentity, StateStore
 class FakeHooks:
     def __init__(self, live_config):
         self.live_config = live_config
+        self.lock_parent = live_config.parent
         self.live = {11, 12, 13}
         self.calls = []
         self.next_pid = 20
@@ -32,10 +33,11 @@ class FakeHooks:
         self.kill_mode = "process"
         self.exec_stop = ""
         self.trusted_uid = os.getuid()
+        self.starts = []
 
     @contextmanager
     def transaction_lock(self):
-        with reload.ReloadTransactionLock(self.live_config.parent / "reload.lock", owner=os.getuid()):
+        with reload.ReloadTransactionLock(self.lock_parent / "reload.lock", owner=os.getuid()):
             yield
 
     def validate_resolution(self, release, context):
@@ -56,7 +58,7 @@ class FakeHooks:
     def alive(self, identity):
         return identity.pid in self.live
 
-    def launch_context(self, identity, config, run_dir):
+    def launch_context(self, identity, config, run_dir, project_root=None):
         return SimpleNamespace(environment={"JIAN_KONG_VLM_REVIEW_CONFIG": str(self.live_config)},
                                python=sys.executable, cwd=str(run_dir), uid=os.getuid(), gid=os.getgid(), groups=tuple(os.getgroups()))
 
@@ -81,6 +83,7 @@ class FakeHooks:
 
     def start_services(self, release, run_dir, config, context):
         self.calls.append(("start", release.name))
+        self.starts.append((release, run_dir, config, dict(context.environment)))
         if self.fail == "start" and release.name == "candidate":
             raise OSError("candidate failed")
         self.next_pid += 1
@@ -353,9 +356,13 @@ def test_launch_context_captures_owned_process_credentials_and_original_command(
     owner = "f" * 32
     config = tmp_path / "live.json"
     run_dir = tmp_path / "run"
+    config.write_text("{}")
+    run_dir.mkdir()
+    project_alias = tmp_path.with_name(tmp_path.name + "-alias")
+    project_alias.symlink_to(tmp_path, target_is_directory=True)
     (proc / "environ").write_bytes(f"JIAN_KONG_OWNER_TOKEN={owner}\0PATH=/old/bin\0".encode())
     (proc / "status").write_text("Uid:\t501\t501\t501\t501\nGid:\t20\t20\t20\t20\nGroups:\t20 44\n")
-    (proc / "cmdline").write_bytes("\0".join(["/old/python", "-m", "live_operator.cli", "_services", "--run-dir", str(run_dir), "--config", str(config)]).encode() + b"\0")
+    (proc / "cmdline").write_bytes("\0".join(["/old/python", "-m", "live_operator.cli", "_services", "--run-dir", str(project_alias / "run"), "--config", str(project_alias / "live.json")]).encode() + b"\0")
     (proc / "exe").symlink_to("/original/python3.13")
     (proc / "cwd").symlink_to("/original/cwd")
     real_path = Path
@@ -374,7 +381,9 @@ def test_launch_context_captures_owned_process_credentials_and_original_command(
     hooks = reload.ReloadHooks()
     monkeypatch.setattr(hooks, "alive", lambda identity: True)
     monkeypatch.setattr(hooks, "open_services_log", lambda *args: nullcontext())
-    result = hooks.launch_context(ProcessIdentity(13, "start", 13, owner), config, run_dir)
+    result = hooks.launch_context(
+        ProcessIdentity(13, "start", 13, owner), config, run_dir, tmp_path
+    )
     assert (result.python, result.cwd, result.groups) == ("/original/python3.13", "/original/cwd", (20, 44))
     assert result.uid == proc.stat().st_uid and result.gid == proc.stat().st_gid
     assert result.environment == {"JIAN_KONG_OWNER_TOKEN": owner, "PATH": "/old/bin"}
@@ -825,3 +834,155 @@ def test_publication_reconciliation_rejects_unknown_replacements(tmp_path, monke
             file.verify()
     finally:
         file.close()
+
+
+def test_production_project_alias_is_normalized_before_pinned_runtime_access(rig):
+    """Catches the real `/media/.../JianKong` preflight failure."""
+
+    alias_root = rig.tmp_path.with_name(rig.tmp_path.name + "-project-alias")
+    alias_root.symlink_to(rig.tmp_path, target_is_directory=True)
+    state = rig.store.load()
+    state["run_dir"] = str(alias_root / "run")
+    rig.store.save(state)
+    rig.hooks.live_config = alias_root / rig.live.name
+    for source in (rig.paths.candidate_vlm_config, rig.paths.rollback_vlm_config):
+        payload = json.loads(source.read_text())
+        target = Path(payload["tls_ca_file"])
+        payload["tls_ca_file"] = str(alias_root / target.name)
+        source.write_text(json.dumps(payload))
+    rig.live.write_bytes(rig.paths.rollback_vlm_config.read_bytes())
+    rig.operation.paths = replace(rig.paths, live_vlm_config=rig.live)
+
+    result = rig.operation.execute()
+
+    assert result["ok"] is True, result
+    _, started_run, started_config, environment = rig.hooks.starts[0]
+    assert started_run == rig.run_dir
+    assert started_config == rig.config
+    assert environment["JIAN_KONG_VLM_REVIEW_CONFIG"] == str(rig.live)
+    assert json.loads(rig.live.read_text())["tls_ca_file"] == str(
+        alias_root / rig.paths.candidate_ca.name
+    )
+
+
+def test_alias_binding_rejects_writable_target_outside_trusted_project(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir(mode=0o700)
+    expected = project / "inside.json"
+    expected.write_text("inside")
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o777)
+    outside.chmod(0o777)
+    target = outside / "target.json"
+    target.write_text("outside")
+    alias = project / "alias.json"
+    alias.symlink_to(target)
+
+    with pytest.raises(LifecycleError, match="trusted project"):
+        reload.StableAlias.capture(alias, expected, project, "test authority")
+
+
+def test_alias_binding_detects_resolution_change_between_checks(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir(mode=0o700)
+    expected = project / "expected.json"
+    expected.write_text("expected")
+    replacement = project / "replacement.json"
+    replacement.write_text("replacement")
+    alias = project / "alias.json"
+    alias.symlink_to(expected)
+    binding = reload.StableAlias.capture(alias, expected, project, "test authority")
+    alias.unlink()
+    alias.symlink_to(replacement)
+
+    with pytest.raises(LifecycleError, match="changed"):
+        binding.verify()
+
+
+def test_changed_candidate_ca_alias_does_not_block_valid_rollback(rig):
+    candidate_alias = rig.tmp_path / "candidate-ca-alias"
+    candidate_alias.symlink_to(rig.paths.candidate_ca)
+    payload = json.loads(rig.paths.candidate_vlm_config.read_text())
+    payload["tls_ca_file"] = str(candidate_alias)
+    rig.paths.candidate_vlm_config.write_text(json.dumps(payload))
+    replacement = rig.tmp_path / "replacement-ca"
+    replacement.write_bytes(b"untrusted replacement")
+
+    def change_alias():
+        if rig.hooks.next_pid == 21:
+            candidate_alias.unlink()
+            candidate_alias.symlink_to(replacement)
+
+    rig.hooks.http_self_check = change_alias
+    result = rig.operation.execute()
+
+    assert result["ok"] is False
+    assert result["rolled_back"] is True
+    assert rig.current.resolve() == rig.paths.rollback_release
+    assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+
+
+def test_launch_context_rejects_relative_process_run_or_config_paths(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    owner = "f" * 32
+    config = tmp_path / "live.json"
+    run_dir = tmp_path / "run"
+    config.write_text("{}")
+    run_dir.mkdir()
+    (proc / "environ").write_bytes(
+        f"JIAN_KONG_OWNER_TOKEN={owner}\0PATH=/old/bin\0".encode()
+    )
+    (proc / "status").write_text(
+        "Uid:\t501\t501\t501\t501\nGid:\t20\t20\t20\t20\nGroups:\t20 44\n"
+    )
+    (proc / "cmdline").write_bytes(
+        "\0".join(
+            [
+                "/old/python",
+                "-m",
+                "live_operator.cli",
+                "_services",
+                "--run-dir",
+                "relative-run",
+                "--config",
+                "relative-config.json",
+            ]
+        ).encode()
+        + b"\0"
+    )
+    (proc / "exe").symlink_to("/original/python3.13")
+    (proc / "cwd").symlink_to("/original/cwd")
+    real_path = Path
+    original_stat = Path.stat
+
+    def proc_stat(path, **kwargs):
+        details = original_stat(path, **kwargs)
+        if path == proc:
+            values = list(details)
+            values[4:6] = [501, 20]
+            return os.stat_result(values)
+        return details
+
+    monkeypatch.setattr(Path, "stat", proc_stat)
+    monkeypatch.setattr(
+        reload,
+        "Path",
+        lambda path: proc if str(path) == "/proc/13" else real_path(path),
+    )
+    monkeypatch.setattr(reload.os, "geteuid", lambda: 0)
+    hooks = reload.ReloadHooks()
+    monkeypatch.setattr(hooks, "alive", lambda identity: True)
+
+    with pytest.raises(LifecycleError, match="absolute"):
+        hooks.launch_context(ProcessIdentity(13, "start", 13, owner), config, run_dir)
+
+
+def test_generic_pinned_directory_still_rejects_project_alias(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(project, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        reload.PinnedDirectory(alias)

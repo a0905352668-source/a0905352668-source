@@ -55,6 +55,54 @@ class LaunchContext:
     groups: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class StableAlias:
+    """A non-authoritative spelling bound to one canonical pinned target."""
+
+    spelling: Path
+    canonical: Path
+    project_root: Path
+    description: str
+
+    @staticmethod
+    def _absolute(path: Path, description: str) -> Path:
+        value = Path(path)
+        if not value.is_absolute() or ".." in value.parts:
+            raise LifecycleError(f"{description} must be absolute without traversal")
+        return value
+
+    @classmethod
+    def capture(cls, spelling: Path, canonical: Path, project_root: Path,
+                description: str) -> "StableAlias":
+        spelling = cls._absolute(spelling, description)
+        canonical = cls._absolute(canonical, f"canonical {description}")
+        project_root = cls._absolute(project_root, "trusted project root")
+        try:
+            if canonical.resolve(strict=True) != canonical or project_root.resolve(strict=True) != project_root:
+                raise LifecycleError(f"canonical {description} must not contain aliases")
+            canonical.relative_to(project_root)
+        except ValueError as error:
+            raise LifecycleError(f"{description} is outside the trusted project") from error
+        binding = cls(spelling, canonical, project_root, description)
+        binding.verify()
+        return binding
+
+    def verify(self) -> Path:
+        try:
+            resolved = self.spelling.resolve(strict=True)
+        except OSError as error:
+            raise LifecycleError(f"{self.description} changed or became unavailable") from error
+        if resolved != self.canonical:
+            raise LifecycleError(
+                f"{self.description} changed or resolved outside its trusted project authority"
+            )
+        try:
+            resolved.relative_to(self.project_root)
+        except ValueError as error:
+            raise LifecycleError(f"{self.description} is outside the trusted project") from error
+        return resolved
+
+
 def _regular(path: Path) -> bytes:
     file = PinnedFile(path)
     try:
@@ -154,7 +202,8 @@ class ReloadHooks(RuntimeHooks):
         except (OSError, IndexError):
             return False
 
-    def launch_context(self, identity: ProcessIdentity, config: Path, run_dir: Path) -> LaunchContext:
+    def launch_context(self, identity: ProcessIdentity, config: Path, run_dir: Path,
+                       project_root: Path | None = None) -> LaunchContext:
         proc = Path(f"/proc/{identity.pid}")
         if os.geteuid() != 0:
             raise LifecycleError("reload requires root for the narrow publication boundary")
@@ -170,15 +219,20 @@ class ReloadHooks(RuntimeHooks):
         if environment.get("JIAN_KONG_OWNER_TOKEN") != identity.owner_token:
             raise LifecycleError("services environment ownership mismatch")
         command = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
-        expected = ["-m", "live_operator.cli", "_services", "--run-dir", str(run_dir), "--config", str(config)]
         actual = command[1:]
         if actual and actual[0] == "-P":
             actual = actual[1:]
-        if actual != expected:
+        expected_prefix = ["-m", "live_operator.cli", "_services", "--run-dir"]
+        if (len(actual) != 7 or actual[:4] != expected_prefix or actual[5] != "--config"):
             raise LifecycleError("services launch command does not match requested run/config")
+        root = project_root or Path(os.path.commonpath((str(run_dir), str(config))))
+        run_binding = StableAlias.capture(Path(actual[4]), run_dir, root, "services run path")
+        config_binding = StableAlias.capture(Path(actual[6]), config, root, "services config path")
         LiveConfig.load(config)
         if not self.alive(identity):
             raise LifecycleError("services identity changed while capturing environment")
+        run_binding.verify()
+        config_binding.verify()
         self.context = LaunchContext(environment, os.readlink(proc / "exe"), os.readlink(proc / "cwd"),
                                      details.st_uid, details.st_gid, groups)
         with self.open_services_log(run_dir, self.context):
@@ -316,6 +370,8 @@ class ServicesReload:
         self.paths = paths
         self.hooks = hooks or ReloadHooks()
         self._pins = []
+        self.aliases: list[StableAlias] = []
+        self.ca_aliases: dict[Path, StableAlias] = {}
 
     def _pin(self, value):
         self._pins.append(value)
@@ -326,6 +382,10 @@ class ServicesReload:
         self.selector_parent.verify()
         for pin in self.release_pins[release]:
             pin.verify()
+
+    def _verify_aliases(self) -> None:
+        for alias in self.aliases:
+            alias.verify()
 
     def _pin_release(self, release):
         directory = self._pin(PinnedDirectory(release, trusted_owner=self.hooks.trusted_uid))
@@ -349,6 +409,7 @@ class ServicesReload:
         return pins
 
     def _preserved(self) -> None:
+        self._verify_aliases()
         state = self.store.load()
         if state is None:
             raise LifecycleError("state disappeared during reload")
@@ -382,6 +443,7 @@ class ServicesReload:
         # A broken candidate trust file must not prevent restoring the old trust domain.
         paths = self.ca_files if release == self.paths.candidate_release else (self.paths.rollback_ca,)
         for path in paths:
+            self.ca_aliases[path].verify()
             self.ca_files[path].verify()
 
     def _verify_domain(self, release: Path) -> None:
@@ -442,6 +504,16 @@ class ServicesReload:
 
     def _preflight(self) -> bool:
         p = self.paths
+        fixed_paths = (
+            p.candidate_release, p.rollback_release, p.config,
+            p.candidate_vlm_config, p.rollback_vlm_config,
+            p.candidate_ca, p.rollback_ca, self.store.path,
+        )
+        for path in fixed_paths:
+            StableAlias.capture(path, path, path.parent, "canonical reload input")
+        self.project_root = Path(os.path.commonpath(str(path) for path in fixed_paths))
+        if self.project_root == Path("/") or self.project_root.resolve(strict=True) != self.project_root:
+            raise LifecycleError("reload inputs do not share a canonical trusted project")
         self.original = self.store.load()
         if not self.original or self.original.get("state") != "running":
             raise LifecycleError("operator state must be running")
@@ -470,15 +542,42 @@ class ServicesReload:
         self.old_target = self.selector.content
         if self.current.resolve() != p.rollback_release:
             raise LifecycleError("current does not select rollback release")
-        self.run_dir = Path(self.original["run_dir"])
+        run_spelling = Path(self.original["run_dir"])
+        try:
+            canonical_run = run_spelling.resolve(strict=True)
+        except OSError as error:
+            raise LifecycleError("stored run path is unavailable") from error
+        run_alias = StableAlias.capture(
+            run_spelling, canonical_run, self.project_root, "stored run path"
+        )
+        self.aliases.append(run_alias)
+        self.run_dir = canonical_run
         self.hooks.run_dir = self.run_dir
-        self.context = self.hooks.launch_context(self.service, p.config, self.run_dir)
+        self.context = self.hooks.launch_context(
+            self.service, p.config, self.run_dir, self.project_root
+        )
         self.operator_file = self._pin(PinnedFile(p.config))
         self.live_config_bytes = self.operator_file.content
         configured = self.context.environment.get("JIAN_KONG_VLM_REVIEW_CONFIG", str(DEFAULT_VLM_REVIEW_CONFIG))
-        self.live_vlm = Path(configured)
-        if not self.live_vlm.is_absolute() or (p.live_vlm_config is not None and p.live_vlm_config != self.live_vlm):
-            raise LifecycleError("live VLM path disagrees with owned services environment/default")
+        live_spelling = Path(configured)
+        try:
+            canonical_live = (
+                p.live_vlm_config
+                if p.live_vlm_config is not None
+                else live_spelling.resolve(strict=True)
+            )
+        except OSError as error:
+            raise LifecycleError("live VLM path is unavailable") from error
+        live_alias = StableAlias.capture(
+            live_spelling, canonical_live, self.project_root, "live VLM path"
+        )
+        self.aliases.append(live_alias)
+        self.live_vlm = canonical_live
+        self.context = LaunchContext(
+            dict(self.context.environment, JIAN_KONG_VLM_REVIEW_CONFIG=str(self.live_vlm)),
+            self.context.python, self.context.cwd, self.context.uid,
+            self.context.gid, self.context.groups,
+        )
         self.candidate_file = self._pin(PinnedFile(p.candidate_vlm_config))
         self.rollback_file = self._pin(PinnedFile(p.rollback_vlm_config))
         self.live_file = self._pin(PinnedFile(self.live_vlm))
@@ -498,8 +597,11 @@ class ServicesReload:
             if stat.S_IMODE(file.metadata.st_mode) != 0o600:
                 raise LifecycleError("VLM source configuration must be private 0600")
             config = VLMReviewConfig.from_payload(json.loads(file.content))
-            if not ca_path.is_absolute() or config.tls_ca_file != ca_path:
-                raise LifecycleError("VLM configuration must reference its exact immutable CA argument")
+            ca_alias = StableAlias.capture(
+                config.tls_ca_file, ca_path, self.project_root,
+                "VLM configuration CA path",
+            )
+            self.ca_aliases[ca_path] = ca_alias
         for file in files:
             file.verify()
         for release in (p.candidate_release, p.rollback_release):
