@@ -10,6 +10,7 @@ Group=zty
 ExecStart=/home/zty/YL/JianKong/01_algorithms/mage_vl_migration/run_mage_vl_service_54.sh
 Restart=on-failure
 RestartSec=5s
+RestartPreventExitStatus=78
 NoNewPrivileges=true
 PrivateTmp=true
 
