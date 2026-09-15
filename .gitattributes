@@ -11,4 +11,5 @@
 # Production snapshots must remain byte-for-byte comparable with deployed sources.
 /01_algorithms/live_operator/releases/live-operator-20260909-v178-hot-metadata/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 /01_algorithms/live_operator/releases/live-operator-20260914-v179-boxed-download/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+/01_algorithms/live_operator/releases/live-operator-20260915-v180-mage-vl-migration/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 /01_algorithms/versions/deepstream_motion_cumulative_20260910_v4/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
