@@ -70,19 +70,23 @@ def test_runner_fails_closed_for_symlinked_or_unsafe_runtime_material() -> None:
     assert 'assert_trusted_package_tree()' in runner
     assert "stat -c '%u'" in runner
     assert "stat -c '%a'" in runner
-    assert "stat -c '%F'" in runner
+    assert "stat -c '%f'" in runner
+    assert "stat -c '%F'" not in runner
+    assert 'S_IFMT=8#170000' in runner
+    assert 'S_IFREG=8#100000' in runner
+    assert 'S_IFDIR=8#40000' in runner
     assert 'assert_trusted_descendant_directories "${PROJECT_ROOT}" "${SERVICE_ROOT}" "${service_uid}"' in runner
-    for path, mode, file_type in (
-        ('"${runtime_dir}"', '700', 'directory'),
-        ('"${tls_dir}"', '700', 'directory'),
-        ('"${cache_dir}"', '700', 'directory'),
-        ('"${tls_dir}/mage-vl-54.key"', '600', '"regular file"'),
-        ('"${runtime_dir}/mage-vl-shared.secret"', '600', '"regular file"'),
-        ('"${runtime_dir}/gpu0.lock"', '600', '"regular file"'),
-        ('"${tls_dir}/mage-vl-54.crt"', '644', '"regular file"'),
+    for path, mode, type_bits in (
+        ('"${runtime_dir}"', '700', '"${S_IFDIR}"'),
+        ('"${tls_dir}"', '700', '"${S_IFDIR}"'),
+        ('"${cache_dir}"', '700', '"${S_IFDIR}"'),
+        ('"${tls_dir}/mage-vl-54.key"', '600', '"${S_IFREG}"'),
+        ('"${runtime_dir}/mage-vl-shared.secret"', '600', '"${S_IFREG}"'),
+        ('"${runtime_dir}/gpu0.lock"', '600', '"${S_IFREG}"'),
+        ('"${tls_dir}/mage-vl-54.crt"', '644', '"${S_IFREG}"'),
     ):
         assert f"assert_owned_mode {path} {mode}" in runner
-        assert file_type in runner
+        assert type_bits in runner
 
 
 def test_runner_accepts_only_a_current_release_beneath_the_fixed_releases_root() -> None:
@@ -148,9 +152,12 @@ def _safe_release_fixture(tmp_path: Path) -> tuple[Path, Path]:
     release = releases / "approved-release"
     package = release / "live_operator" / "nested"
     package.mkdir(parents=True)
-    (release / "live_operator" / "__init__.py").write_text("", encoding="utf-8")
-    (package / "mage_vl_service.py").write_text("", encoding="utf-8")
-    _chmod(package / "mage_vl_service.py", 0o755)
+    init_file = release / "live_operator" / "__init__.py"
+    service_file = package / "mage_vl_service.py"
+    init_file.write_text("", encoding="utf-8")
+    service_file.write_text("", encoding="utf-8")
+    _chmod(init_file, 0o644)
+    _chmod(service_file, 0o755)
     for directory in (tmp_path / "service", releases, release, release / "live_operator", package):
         _chmod(directory, 0o755)
     current = tmp_path / "service" / "current"
@@ -188,6 +195,15 @@ def test_linux_validation_accepts_safe_release_and_runtime_fixtures(tmp_path: Pa
 
     assert _shell_validate("validate_release_layout", str(current), str(releases), uid).returncode == 0
     assert _shell_validate("validate_runtime_layout", str(runtime), uid).returncode == 0
+
+
+@linux_only
+def test_linux_validation_accepts_an_empty_regular_gpu_lock(tmp_path: Path) -> None:
+    runtime = _safe_runtime_fixture(tmp_path)
+    lock = runtime / "gpu0.lock"
+
+    assert lock.read_bytes() == b""
+    assert _shell_validate("validate_runtime_layout", str(runtime), str(os.getuid())).returncode == 0
 
 
 @linux_only

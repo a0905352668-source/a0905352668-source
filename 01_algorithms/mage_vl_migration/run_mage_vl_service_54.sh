@@ -16,6 +16,9 @@ TLS_KEY_FILE="${RUNTIME_DIR}/tls/mage-vl-54.key"
 SHARED_SECRET_FILE="${RUNTIME_DIR}/mage-vl-shared.secret"
 CACHE_DIR="${RUNTIME_DIR}/cache"
 GPU_LOCK_FILE="${RUNTIME_DIR}/gpu0.lock"
+S_IFMT=8#170000
+S_IFREG=8#100000
+S_IFDIR=8#40000
 
 fail() {
   echo "jiankong-mage-vl-54: $*" >&2
@@ -41,18 +44,30 @@ assert_no_symlink_path() {
   done
 }
 
-assert_owned_mode_type() {
+assert_file_type_bits() {
   local path="$1"
-  local expected_type="$2"
-  local expected_mode="$3"
-  local expected_uid="$4"
-  local actual_type actual_uid actual_mode
+  local expected_type_bits="$2"
+  local actual_mode_bits
 
   assert_no_symlink_path "${path}" || return
-  actual_type="$(stat -c '%F' -- "${path}")" || { fail "cannot inspect runtime material"; return; }
+  actual_mode_bits="$(stat -c '%f' -- "${path}")" || { fail "cannot inspect file type"; return; }
+  [[ "${actual_mode_bits}" =~ ^[[:xdigit:]]+$ ]] || { fail "invalid file type metadata"; return; }
+  (( (16#${actual_mode_bits} & S_IFMT) == expected_type_bits )) || {
+    fail "runtime material has wrong type"
+    return
+  }
+}
+
+assert_owned_mode_type() {
+  local path="$1"
+  local expected_type_bits="$2"
+  local expected_mode="$3"
+  local expected_uid="$4"
+  local actual_uid actual_mode
+
+  assert_file_type_bits "${path}" "${expected_type_bits}" || return
   actual_uid="$(stat -c '%u' -- "${path}")" || { fail "cannot inspect runtime material"; return; }
   actual_mode="$(stat -c '%a' -- "${path}")" || { fail "cannot inspect runtime material"; return; }
-  [[ "${actual_type}" == "${expected_type}" ]] || { fail "runtime material has wrong type"; return; }
   [[ "${actual_uid}" == "${expected_uid}" ]] || { fail "runtime material has wrong owner"; return; }
   [[ "${actual_mode}" == "${expected_mode}" ]] || { fail "runtime material has unsafe mode"; return; }
 }
@@ -61,21 +76,19 @@ assert_owned_mode() {
   local path="$1"
   local expected_mode="$2"
   local expected_uid="$3"
-  local expected_type="$4"
+  local expected_type_bits="$4"
 
-  assert_owned_mode_type "${path}" "${expected_type}" "${expected_mode}" "${expected_uid}"
+  assert_owned_mode_type "${path}" "${expected_type_bits}" "${expected_mode}" "${expected_uid}"
 }
 
 assert_trusted_directory() {
   local path="$1"
   local expected_uid="$2"
-  local actual_type actual_uid actual_mode
+  local actual_uid actual_mode
 
-  assert_no_symlink_path "${path}" || return
-  actual_type="$(stat -c '%F' -- "${path}")" || { fail "cannot inspect release directory"; return; }
+  assert_file_type_bits "${path}" "${S_IFDIR}" || return
   actual_uid="$(stat -c '%u' -- "${path}")" || { fail "cannot inspect release directory"; return; }
   actual_mode="$(stat -c '%a' -- "${path}")" || { fail "cannot inspect release directory"; return; }
-  [[ "${actual_type}" == "directory" ]] || { fail "release path is not a directory"; return; }
   [[ "${actual_uid}" == "${expected_uid}" ]] || { fail "release path has wrong owner"; return; }
   (( (8#${actual_mode} & 8#22) == 0 )) || { fail "release path is group/world writable"; return; }
 }
@@ -109,13 +122,11 @@ assert_trusted_descendant_directories() {
 assert_trusted_regular_file() {
   local path="$1"
   local expected_uid="$2"
-  local actual_type actual_uid actual_mode
+  local actual_uid actual_mode
 
-  assert_no_symlink_path "${path}" || return
-  actual_type="$(stat -c '%F' -- "${path}")" || { fail "cannot inspect release file"; return; }
+  assert_file_type_bits "${path}" "${S_IFREG}" || return
   actual_uid="$(stat -c '%u' -- "${path}")" || { fail "cannot inspect release file"; return; }
   actual_mode="$(stat -c '%a' -- "${path}")" || { fail "cannot inspect release file"; return; }
-  [[ "${actual_type}" == "regular file" ]] || { fail "release file has wrong type"; return; }
   [[ "${actual_uid}" == "${expected_uid}" ]] || { fail "release file has wrong owner"; return; }
   (( (8#${actual_mode} & 8#22) == 0 )) || { fail "release file is group/world writable"; return; }
 }
@@ -148,13 +159,13 @@ validate_runtime_layout() {
   local tls_dir="${runtime_dir}/tls"
   local cache_dir="${runtime_dir}/cache"
 
-  assert_owned_mode "${runtime_dir}" 700 "${expected_uid}" directory || return
-  assert_owned_mode "${tls_dir}" 700 "${expected_uid}" directory || return
-  assert_owned_mode "${cache_dir}" 700 "${expected_uid}" directory || return
-  assert_owned_mode "${tls_dir}/mage-vl-54.key" 600 "${expected_uid}" "regular file" || return
-  assert_owned_mode "${runtime_dir}/mage-vl-shared.secret" 600 "${expected_uid}" "regular file" || return
-  assert_owned_mode "${runtime_dir}/gpu0.lock" 600 "${expected_uid}" "regular file" || return
-  assert_owned_mode "${tls_dir}/mage-vl-54.crt" 644 "${expected_uid}" "regular file"
+  assert_owned_mode "${runtime_dir}" 700 "${expected_uid}" "${S_IFDIR}" || return
+  assert_owned_mode "${tls_dir}" 700 "${expected_uid}" "${S_IFDIR}" || return
+  assert_owned_mode "${cache_dir}" 700 "${expected_uid}" "${S_IFDIR}" || return
+  assert_owned_mode "${tls_dir}/mage-vl-54.key" 600 "${expected_uid}" "${S_IFREG}" || return
+  assert_owned_mode "${runtime_dir}/mage-vl-shared.secret" 600 "${expected_uid}" "${S_IFREG}" || return
+  assert_owned_mode "${runtime_dir}/gpu0.lock" 600 "${expected_uid}" "${S_IFREG}" || return
+  assert_owned_mode "${tls_dir}/mage-vl-54.crt" 644 "${expected_uid}" "${S_IFREG}"
 }
 
 validate_release_layout() {
