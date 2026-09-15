@@ -147,10 +147,11 @@ class ReloadHooks(RuntimeHooks):
         return result.stdout
 
     def watchdog_state(self, unit: str) -> dict[str, str]:
-        output = self._systemctl(
-            "show", unit, "--property=KillMode,ExecStop,ActiveState,LoadState", "--all"
-        )
+        output = self._systemctl("show", unit, "--property=KillMode,ActiveState,LoadState")
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        values["ExecStop"] = self._systemctl(
+            "show", unit, "--property=ExecStop", "--value"
+        ).rstrip("\n")
         if values.get("LoadState") != "loaded":
             raise LifecycleError("watchdog unit unavailable")
         return values

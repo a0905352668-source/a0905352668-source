@@ -748,24 +748,32 @@ def test_privileged_systemctl_does_not_search_caller_path(monkeypatch):
     assert commands == [["/usr/bin/systemctl", "start", "jiankong-live-watchdog.service"]]
 
 
-def test_watchdog_state_requests_all_to_observe_empty_execstop(monkeypatch):
-    calls = []
+def test_watchdog_state_queries_empty_execstop_value_explicitly(monkeypatch):
+    unit = "jiankong-live-watchdog.service"
+    commands = []
 
-    def systemctl(*arguments):
-        calls.append(arguments)
-        lines = ["KillMode=process", "LoadState=loaded", "ActiveState=active"]
-        if "--all" in arguments:
-            lines.insert(1, "ExecStop=")
-        return "\n".join(lines) + "\n"
+    def run(command, **kwargs):
+        commands.append(command)
+        if command == [
+            "/usr/bin/systemctl", "show", unit,
+            "--property=KillMode,ActiveState,LoadState",
+        ]:
+            output = "KillMode=process\nLoadState=loaded\nActiveState=active\n"
+        elif command == [
+            "/usr/bin/systemctl", "show", unit, "--property=ExecStop", "--value",
+        ]:
+            output = ""  # systemd 249: rc=0 and zero bytes means unset/empty.
+        else:
+            raise AssertionError(f"unexpected systemctl command: {command!r}")
+        return subprocess.CompletedProcess(command, 0, stdout=output)
 
-    hooks = reload.ReloadHooks()
-    monkeypatch.setattr(hooks, "_systemctl", systemctl)
+    monkeypatch.setattr(reload.subprocess, "run", run)
 
-    assert hooks.watchdog_state("jiankong-live-watchdog.service")["ExecStop"] == ""
-    assert calls == [(
-        "show", "jiankong-live-watchdog.service",
-        "--property=KillMode,ExecStop,ActiveState,LoadState", "--all",
-    )]
+    assert reload.ReloadHooks().watchdog_state(unit) == {
+        "KillMode": "process", "LoadState": "loaded",
+        "ActiveState": "active", "ExecStop": "",
+    }
+    assert len(commands) == 2
 
 
 @pytest.mark.parametrize("failure", ["after-rename", "directory-fsync", "interrupt", "handled-signal"])
