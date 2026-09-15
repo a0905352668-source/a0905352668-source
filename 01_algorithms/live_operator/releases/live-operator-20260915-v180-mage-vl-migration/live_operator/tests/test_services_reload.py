@@ -748,6 +748,26 @@ def test_privileged_systemctl_does_not_search_caller_path(monkeypatch):
     assert commands == [["/usr/bin/systemctl", "start", "jiankong-live-watchdog.service"]]
 
 
+def test_watchdog_state_requests_all_to_observe_empty_execstop(monkeypatch):
+    calls = []
+
+    def systemctl(*arguments):
+        calls.append(arguments)
+        lines = ["KillMode=process", "LoadState=loaded", "ActiveState=active"]
+        if "--all" in arguments:
+            lines.insert(1, "ExecStop=")
+        return "\n".join(lines) + "\n"
+
+    hooks = reload.ReloadHooks()
+    monkeypatch.setattr(hooks, "_systemctl", systemctl)
+
+    assert hooks.watchdog_state("jiankong-live-watchdog.service")["ExecStop"] == ""
+    assert calls == [(
+        "show", "jiankong-live-watchdog.service",
+        "--property=KillMode,ExecStop,ActiveState,LoadState", "--all",
+    )]
+
+
 @pytest.mark.parametrize("failure", ["after-rename", "directory-fsync", "interrupt", "handled-signal"])
 def test_state_publication_failure_reconciles_known_inode_before_rollback(rig, monkeypatch, failure):
     actual_replace = os.replace
