@@ -836,22 +836,35 @@ def test_publication_reconciliation_rejects_unknown_replacements(tmp_path, monke
         file.close()
 
 
-def test_production_project_alias_is_normalized_before_pinned_runtime_access(rig):
-    """Catches the real `/media/.../JianKong` preflight failure."""
+def test_writable_legacy_alias_cannot_redirect_post_normalization_operations(rig):
+    """A retargeted production-style alias is never an ongoing authority."""
 
     alias_root = rig.tmp_path.with_name(rig.tmp_path.name + "-project-alias")
     alias_root.symlink_to(rig.tmp_path, target_is_directory=True)
+    attacker_root = rig.tmp_path.with_name(rig.tmp_path.name + "-attacker")
+    attacker_root.mkdir(mode=0o777)
+    attacker_root.chmod(0o777)
+    (attacker_root / "run").mkdir()
+    attacker_live = attacker_root / rig.live.name
+    attacker_live.write_text("attacker sentinel")
+    (attacker_root / rig.paths.rollback_ca.name).write_bytes(b"attacker ca")
     state = rig.store.load()
     state["run_dir"] = str(alias_root / "run")
     rig.store.save(state)
     rig.hooks.live_config = alias_root / rig.live.name
-    for source in (rig.paths.candidate_vlm_config, rig.paths.rollback_vlm_config):
-        payload = json.loads(source.read_text())
-        target = Path(payload["tls_ca_file"])
-        payload["tls_ca_file"] = str(alias_root / target.name)
-        source.write_text(json.dumps(payload))
+    rollback = json.loads(rig.paths.rollback_vlm_config.read_text())
+    rollback["tls_ca_file"] = str(alias_root / rig.paths.rollback_ca.name)
+    rig.paths.rollback_vlm_config.write_text(json.dumps(rollback))
     rig.live.write_bytes(rig.paths.rollback_vlm_config.read_bytes())
     rig.operation.paths = replace(rig.paths, live_vlm_config=rig.live)
+    original_suspend = rig.hooks.suspend_watchdog
+
+    def retarget_after_normalization(unit):
+        original_suspend(unit)
+        alias_root.unlink()
+        alias_root.symlink_to(attacker_root, target_is_directory=True)
+
+    rig.hooks.suspend_watchdog = retarget_after_normalization
 
     result = rig.operation.execute()
 
@@ -860,9 +873,9 @@ def test_production_project_alias_is_normalized_before_pinned_runtime_access(rig
     assert started_run == rig.run_dir
     assert started_config == rig.config
     assert environment["JIAN_KONG_VLM_REVIEW_CONFIG"] == str(rig.live)
-    assert json.loads(rig.live.read_text())["tls_ca_file"] == str(
-        alias_root / rig.paths.candidate_ca.name
-    )
+    assert json.loads(rig.live.read_text())["tls_ca_file"] == str(rig.paths.candidate_ca)
+    assert attacker_live.read_text() == "attacker sentinel"
+    assert (attacker_root / rig.paths.rollback_ca.name).read_bytes() == b"attacker ca"
 
 
 def test_alias_binding_rejects_writable_target_outside_trusted_project(tmp_path):
@@ -879,10 +892,10 @@ def test_alias_binding_rejects_writable_target_outside_trusted_project(tmp_path)
     alias.symlink_to(target)
 
     with pytest.raises(LifecycleError, match="trusted project"):
-        reload.StableAlias.capture(alias, expected, project, "test authority")
+        reload._normalize_legacy_path(alias, expected, project, "test authority")
 
 
-def test_alias_binding_detects_resolution_change_between_checks(tmp_path):
+def test_normalized_path_discards_writable_alias_authority(tmp_path):
     project = tmp_path / "project"
     project.mkdir(mode=0o700)
     expected = project / "expected.json"
@@ -891,35 +904,28 @@ def test_alias_binding_detects_resolution_change_between_checks(tmp_path):
     replacement.write_text("replacement")
     alias = project / "alias.json"
     alias.symlink_to(expected)
-    binding = reload.StableAlias.capture(alias, expected, project, "test authority")
+    canonical = reload._normalize_legacy_path(alias, expected, project, "test authority")
     alias.unlink()
     alias.symlink_to(replacement)
 
-    with pytest.raises(LifecycleError, match="changed"):
-        binding.verify()
+    assert canonical == expected
+    assert canonical.read_text() == "expected"
 
 
-def test_changed_candidate_ca_alias_does_not_block_valid_rollback(rig):
+def test_candidate_configuration_rejects_alias_ca_before_mutation(rig):
     candidate_alias = rig.tmp_path / "candidate-ca-alias"
     candidate_alias.symlink_to(rig.paths.candidate_ca)
     payload = json.loads(rig.paths.candidate_vlm_config.read_text())
     payload["tls_ca_file"] = str(candidate_alias)
     rig.paths.candidate_vlm_config.write_text(json.dumps(payload))
-    replacement = rig.tmp_path / "replacement-ca"
-    replacement.write_bytes(b"untrusted replacement")
-
-    def change_alias():
-        if rig.hooks.next_pid == 21:
-            candidate_alias.unlink()
-            candidate_alias.symlink_to(replacement)
-
-    rig.hooks.http_self_check = change_alias
     result = rig.operation.execute()
 
     assert result["ok"] is False
-    assert result["rolled_back"] is True
-    assert rig.current.resolve() == rig.paths.rollback_release
-    assert rig.live.read_bytes() == rig.paths.rollback_vlm_config.read_bytes()
+    assert result["error"]["stage"] == "preflight"
+    assert not any(
+        isinstance(call, tuple) and call[0] in ("stop", "start", "block")
+        for call in rig.hooks.calls
+    )
 
 
 def test_launch_context_rejects_relative_process_run_or_config_paths(tmp_path, monkeypatch):
