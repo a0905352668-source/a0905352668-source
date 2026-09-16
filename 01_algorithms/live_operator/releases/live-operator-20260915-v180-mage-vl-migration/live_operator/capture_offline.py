@@ -329,11 +329,15 @@ class OfflineEvaluator:
         except (OSError, ValueError, json.JSONDecodeError):
             return self._input_error(pending, "invalid_visibility_sidecar")
 
+        previous_request_at = self._last_request_at
         self._last_request_at = now
         self._write_checkpoint()
         try:
             response = self.capture_sender(pending.entry, visibility_path)
         except CaptureRequestError as error:
+            if error.reason == "production_busy":
+                self._last_request_at = previous_request_at
+                self._write_checkpoint()
             self._append_pause(error.reason, pending.entry.event_id)
             return RunResult("paused", error.reason, pending.entry.event_id)
         except (OSError, TimeoutError, URLError):
@@ -467,9 +471,7 @@ class OfflineEvaluator:
         scheduler = mage.get("scheduler")
         if not isinstance(scheduler, Mapping):
             return "vlm_unhealthy"
-        if scheduler.get("active_kind") is not None or int(
-            scheduler.get("production_waiting", 0) or 0
-        ) > 0:
+        if scheduler.get("active_kind") == "offline":
             return "production_busy"
         quiet = scheduler.get("quiet_remaining_seconds")
         if not isinstance(quiet, (int, float)) or float(quiet) > 0:

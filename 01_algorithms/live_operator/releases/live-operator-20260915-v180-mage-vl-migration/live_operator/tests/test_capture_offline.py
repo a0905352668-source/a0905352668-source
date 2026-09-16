@@ -11,6 +11,7 @@ import pytest
 
 from live_operator.capture_dataset import LabeledEvent, ManifestEntry
 from live_operator.capture_offline import (
+    CaptureRequestError,
     CaptureReviewClient,
     OfflineEvaluator,
     build_parser,
@@ -172,7 +173,7 @@ class Rig:
 
 @pytest.mark.parametrize(
     "breach",
-    ["production_busy", "fps_drop", "camera_loss", "vlm_unhealthy", "memory_pressure"],
+    ["fps_drop", "camera_loss", "vlm_unhealthy", "memory_pressure"],
 )
 def test_breach_pauses_before_claim(tmp_path: Path, breach: str) -> None:
     rig = Rig(tmp_path)
@@ -186,6 +187,26 @@ def test_breach_pauses_before_claim(tmp_path: Path, breach: str) -> None:
     records = [json.loads(line) for line in (rig.output / "results.jsonl").read_text().splitlines()]
     assert records[-1]["record_type"] == "pause"
     assert "label" not in records[-1]
+
+
+def test_active_production_can_reserve_offline_without_consuming_rate_limit(
+    tmp_path: Path,
+) -> None:
+    rig = Rig(tmp_path)
+    rig.set_breach("production_busy")
+
+    def busy(_entry: ManifestEntry, _path: Path) -> dict:
+        rig.capture_requests += 1
+        raise CaptureRequestError("production_busy")
+
+    rig.evaluator.capture_sender = busy
+
+    first = rig.evaluator.run_once()
+    second = rig.evaluator.run_once()
+
+    assert first.state == second.state == "paused"
+    assert first.reason == second.reason == "production_busy"
+    assert rig.capture_requests == 2
 
 
 def test_end_to_end_resume_and_report(tmp_path: Path) -> None:

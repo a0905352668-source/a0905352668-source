@@ -68,6 +68,64 @@ def test_validation_mode_starts_immediately_and_finishes_current_offline() -> No
     production.release(latency_seconds=0.5)
 
 
+def test_validation_reserves_next_slot_then_returns_turn_to_production() -> None:
+    clock = FakeClock()
+    gate = ProductionFirstGate(
+        clock,
+        quiet_seconds=0.0,
+        cancel_offline_on_production=False,
+        reserve_offline_turn=True,
+    )
+    gate.production_arrived()
+    active_production = gate.try_acquire("production")
+    assert active_production is not None
+
+    gate.offline_arrived()
+    gate.offline_arrived()
+    assert gate.try_acquire("offline") is None
+    assert gate.snapshot()["offline_reserved"] is True
+
+    active_production.release(latency_seconds=1.0)
+    gate.production_arrived()
+    assert gate.try_acquire("production") is None
+
+    offline = gate.try_acquire("offline")
+    assert offline is not None
+    assert gate.snapshot()["offline_reserved"] is False
+    gate.production_arrived()
+    offline.release(latency_seconds=2.0)
+
+    gate.offline_arrived()
+    assert gate.try_acquire("offline") is None
+    production = gate.try_acquire("production")
+    assert production is not None
+    production.release(latency_seconds=0.5)
+
+
+def test_abandoned_offline_reservation_expires() -> None:
+    clock = FakeClock()
+    gate = ProductionFirstGate(
+        clock,
+        quiet_seconds=0.0,
+        cancel_offline_on_production=False,
+        reserve_offline_turn=True,
+        offline_reservation_seconds=5.0,
+    )
+    gate.production_arrived()
+    active = gate.try_acquire("production")
+    assert active is not None
+    gate.offline_arrived()
+    active.release(latency_seconds=1.0)
+
+    clock.advance(5.001)
+    gate.production_arrived()
+    production = gate.try_acquire("production")
+
+    assert production is not None
+    assert gate.snapshot()["offline_reserved"] is False
+    production.release(latency_seconds=0.5)
+
+
 def test_production_can_start_without_waiting_for_quiet_time() -> None:
     clock = FakeClock()
     gate = ProductionFirstGate(clock, quiet_seconds=30.0)

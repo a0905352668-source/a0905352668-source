@@ -1190,6 +1190,7 @@ class ReviewApplication:
             priority_clock,
             quiet_seconds=offline_quiet_seconds,
             cancel_offline_on_production=False,
+            reserve_offline_turn=offline_quiet_seconds <= 0.0,
         )
         self.model_fingerprint = getattr(
             reviewer,
@@ -1712,11 +1713,22 @@ def make_handler(application: ReviewApplication):
             kind = "production" if self.path == "/v1/review" else "offline"
             if kind == "production":
                 application.priority.production_arrived()
+            else:
+                application.priority.offline_arrived()
             lease = application.priority.try_acquire(kind)
             if lease is None:
                 self.send_response(int(HTTPStatus.SERVICE_UNAVAILABLE))
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Retry-After", "2" if kind == "production" else "30")
+                offline_wait = "1"
+                if kind == "offline":
+                    quiet_remaining = application.priority.snapshot().get(
+                        "quiet_remaining_seconds", 0.0
+                    )
+                    if isinstance(quiet_remaining, (int, float)) and quiet_remaining > 0:
+                        offline_wait = str(max(1, int(quiet_remaining + 0.999)))
+                self.send_header(
+                    "Retry-After", "2" if kind == "production" else offline_wait
+                )
                 busy_body = b'{"error":"review service is busy"}'
                 self.send_header("Content-Length", str(len(busy_body)))
                 self.end_headers()

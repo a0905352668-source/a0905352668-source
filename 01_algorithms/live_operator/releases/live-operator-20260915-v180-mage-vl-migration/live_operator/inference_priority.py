@@ -27,14 +27,20 @@ class ProductionFirstGate:
         clock: Callable[[], float],
         quiet_seconds: float = 30.0,
         cancel_offline_on_production: bool = True,
+        reserve_offline_turn: bool = False,
+        offline_reservation_seconds: float = 5.0,
     ) -> None:
         self._clock = clock
         self.quiet_seconds = float(quiet_seconds)
         self.cancel_offline_on_production = bool(cancel_offline_on_production)
+        self.reserve_offline_turn = bool(reserve_offline_turn)
+        self.offline_reservation_seconds = float(offline_reservation_seconds)
         self._lock = threading.Lock()
         self._active: GateLease | None = None
         self._last_production_at = float(clock())
         self._production_waiting = 0
+        self._offline_reserved_until: float | None = None
+        self._production_turn = False
         self._admitted = {"production": 0, "offline": 0}
         self._rejected = {"production": 0, "offline": 0}
         self._errors = {"production": 0, "offline": 0}
@@ -55,12 +61,26 @@ class ProductionFirstGate:
             ):
                 self._active.cancelled.set()
 
+    def offline_arrived(self) -> None:
+        with self._lock:
+            if self.reserve_offline_turn and not self._production_turn:
+                self._offline_reserved_until = (
+                    float(self._clock()) + self.offline_reservation_seconds
+                )
+
     def try_acquire(self, kind: WorkKind) -> GateLease | None:
         if kind not in ("production", "offline"):
             raise ValueError("invalid inference kind")
         with self._lock:
             now = float(self._clock())
+            offline_reserved = self._offline_reserved_at(now)
             if self._active is not None:
+                self._rejected[kind] += 1
+                return None
+            if kind == "production" and offline_reserved:
+                self._rejected[kind] += 1
+                return None
+            if kind == "offline" and self._production_turn:
                 self._rejected[kind] += 1
                 return None
             if (
@@ -71,6 +91,9 @@ class ProductionFirstGate:
                 return None
             if kind == "production" and self._production_waiting:
                 self._production_waiting -= 1
+                self._production_turn = False
+            if kind == "offline":
+                self._offline_reserved_until = None
             lease = GateLease(self, kind)
             self._active = lease
             self._admitted[kind] += 1
@@ -78,13 +101,16 @@ class ProductionFirstGate:
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
+            now = float(self._clock())
             quiet_remaining = max(
                 0.0,
-                self.quiet_seconds - (float(self._clock()) - self._last_production_at),
+                self.quiet_seconds - (now - self._last_production_at),
             )
             return {
                 "active_kind": None if self._active is None else self._active.kind,
                 "production_waiting": self._production_waiting,
+                "offline_reserved": self._offline_reserved_at(now),
+                "production_turn": self._production_turn,
                 "offline_cancel_requested": bool(
                     self._active is not None
                     and self._active.kind == "offline"
@@ -106,6 +132,14 @@ class ProductionFirstGate:
                 "offline_last_latency_seconds": self._last_latency_seconds["offline"],
             }
 
+    def _offline_reserved_at(self, now: float) -> bool:
+        if self._offline_reserved_until is None:
+            return False
+        if now >= self._offline_reserved_until:
+            self._offline_reserved_until = None
+            return False
+        return True
+
     def _release(
         self,
         lease: GateLease,
@@ -120,6 +154,8 @@ class ProductionFirstGate:
                 raise RuntimeError("inference lease is not active")
             lease._released = True
             self._active = None
+            if lease.kind == "offline" and self._production_waiting:
+                self._production_turn = True
             self._latency_seconds[lease.kind] += float(latency_seconds)
             self._last_latency_seconds[lease.kind] = float(latency_seconds)
             if error:

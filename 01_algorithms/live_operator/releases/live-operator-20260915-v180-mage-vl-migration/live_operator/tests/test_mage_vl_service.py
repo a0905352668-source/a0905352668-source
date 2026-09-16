@@ -271,6 +271,39 @@ def test_offline_endpoint_waits_for_quiet_period(tmp_path: Path) -> None:
     assert reviewer.capture_calls == 0
 
 
+def test_offline_endpoint_reserves_next_slot_in_immediate_mode(tmp_path: Path) -> None:
+    reviewer = FakeReviewer()
+    application = ReviewApplication(
+        reviewer=reviewer,
+        shared_secret=SECRET,
+        cache_dir=tmp_path / "cache",
+        max_request_bytes=1024 * 1024,
+        clock=lambda: 1_700_000_000,
+        priority_clock=lambda: 31.0,
+        offline_quiet_seconds=0.0,
+    )
+    application.priority.production_arrived()
+    active = application.priority.try_acquire("production")
+    assert active is not None
+
+    waiting_status, _payload, waiting_headers = _post(
+        application, "/v1/capture-review", _capture_archive(tmp_path)
+    )
+    active.release(latency_seconds=1.0)
+    production_status, _payload, _headers = _post(
+        application, "/v1/review", _stage_one_archive(tmp_path)
+    )
+    offline_status, _payload, _headers = _post(
+        application, "/v1/capture-review", _capture_archive(tmp_path)
+    )
+
+    assert waiting_status == 503
+    assert waiting_headers["Retry-After"] == "1"
+    assert production_status == 503
+    assert offline_status == 200
+    assert reviewer.capture_calls == 1
+
+
 def test_cancelled_capture_review_is_not_cached(tmp_path: Path) -> None:
     reviewer = FakeReviewer()
     application = _application(tmp_path, reviewer, lambda: 31.0)
