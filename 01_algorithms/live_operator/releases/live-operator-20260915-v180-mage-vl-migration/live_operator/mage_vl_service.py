@@ -676,6 +676,21 @@ def probe_video_metadata(video_path: Path) -> VideoMetadata:
         capture.release()
 
 
+def _generation_cancel_mask(
+    torch_module: Any,
+    input_ids: Any,
+    cancel_event: threading.Event,
+) -> Any:
+    """Return the one-dimensional batch mask required by Transformers."""
+
+    return torch_module.full(
+        (input_ids.shape[0],),
+        cancel_event.is_set(),
+        dtype=torch_module.bool,
+        device=input_ids.device,
+    )
+
+
 def decode_candidate_frames(
     video_path: Path,
     sequences: Sequence[CandidateSequence],
@@ -1075,12 +1090,7 @@ class MageVLReviewer:
         class CancelWhenProductionArrives(StoppingCriteria):
             def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> Any:
                 del scores, kwargs
-                return torch.full(
-                    (input_ids.shape[0], 1),
-                    cancel_event.is_set(),
-                    dtype=torch.bool,
-                    device=input_ids.device,
-                )
+                return _generation_cancel_mask(torch, input_ids, cancel_event)
 
         if sequences:
             with self._lock:

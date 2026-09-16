@@ -25,6 +25,7 @@ from live_operator.mage_vl_service import (
     make_handler,
     select_candidate_sequences,
     _parser,
+    _generation_cancel_mask,
 )
 from live_operator.vlm_review import (
     VLM_EVIDENCE_REVISION,
@@ -308,6 +309,27 @@ def test_service_defaults_to_immediate_nonpreemptive_validation() -> None:
     )
 
     assert args.offline_quiet_seconds == 0.0
+
+
+def test_generation_cancel_mask_is_one_boolean_per_batch_item() -> None:
+    calls = []
+
+    class FakeTorch:
+        bool = "bool"
+
+        @staticmethod
+        def full(shape, value, *, dtype, device):
+            calls.append((shape, value, dtype, device))
+            return "mask"
+
+    class InputIds:
+        shape = (3, 20)
+        device = "cuda:0"
+
+    cancelled = threading.Event()
+
+    assert _generation_cancel_mask(FakeTorch, InputIds(), cancelled) == "mask"
+    assert calls == [((3,), False, "bool", "cuda:0")]
 
 
 def test_stage_one_selects_twenty_frames_with_four_before_alarm() -> None:
