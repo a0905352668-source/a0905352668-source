@@ -10,7 +10,8 @@ from typing import Any, Mapping, Sequence
 
 
 CAPTURE_FRAME_COUNT = 30
-CAPTURE_EVIDENCE_REVISION = "person-nearest-screen-span5s-30f-jpeg92-v2"
+CAPTURE_CROP_MARGIN_RATIO = 0.25
+CAPTURE_EVIDENCE_REVISION = "person-nearest-screen-clean-span5s-30f-margin25-jpeg92-v3"
 
 
 @dataclass(frozen=True)
@@ -25,11 +26,9 @@ def build_capture_frame(
     full_frame: Any,
     *,
     crop_box: tuple[int, int, int, int],
-    person_box: tuple[int, int, int, int],
-    screen_polygon: Sequence[tuple[float, float]],
     image_size: int = 448,
 ) -> Any:
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
     if image_size <= 0:
         raise ValueError("image_size must be positive")
@@ -47,26 +46,6 @@ def build_capture_frame(
         (image_size - view.height) // 2,
     )
     evidence.paste(view, origin)
-    crop_left, crop_top, _crop_right, _crop_bottom = crop_box
-
-    def transported(point: tuple[float, float]) -> tuple[int, int]:
-        return (
-            int(round((point[0] - crop_left) * scale)) + origin[0],
-            int(round((point[1] - crop_top) * scale)) + origin[1],
-        )
-
-    draw = ImageDraw.Draw(evidence)
-    screen_points = [transported(point) for point in screen_polygon]
-    if len(screen_points) >= 3:
-        draw.line(
-            screen_points + [screen_points[0]], fill=(255, 0, 0), width=3
-        )
-    person_left, person_top, person_right, person_bottom = person_box
-    draw.rectangle(
-        (*transported((person_left, person_top)), *transported((person_right, person_bottom))),
-        outline=(255, 165, 0),
-        width=3,
-    )
     return evidence
 
 
@@ -110,10 +89,7 @@ def decode_capture_frames(
         screen_polygons = _visibility_screens(
             visibility, video_width=width, video_height=height
         )
-        crop_specs: dict[
-            str,
-            tuple[tuple[int, int, int, int], tuple[tuple[float, float], ...]],
-        ] = {}
+        crop_specs: dict[str, tuple[int, int, int, int]] = {}
         for track_id, entries in selected_by_track:
             person_boxes = [
                 box
@@ -131,14 +107,11 @@ def decode_capture_frames(
             screen_polygon = _associated_screen(entries, screen_polygons, person_boxes)
             if not person_boxes or screen_polygon is None:
                 continue
-            crop_specs[track_id] = (
-                _joint_crop_box(
-                    person_boxes,
-                    screen_polygon,
-                    frame_width=width,
-                    frame_height=height,
-                ),
+            crop_specs[track_id] = _joint_crop_box(
+                person_boxes,
                 screen_polygon,
+                frame_width=width,
+                frame_height=height,
             )
         targets: dict[int, list[tuple[str, int, float, Mapping[str, Any]]]] = {}
         for track_id, entries in selected_by_track:
@@ -148,6 +121,8 @@ def decode_capture_frames(
                 targets.setdefault(frame_index, []).append(
                     (track_id, order, time_sec, entry)
                 )
+        if not targets:
+            return ()
 
         panels: dict[str, dict[int, tuple[Any, int, float]]] = {
             track_id: {} for track_id, _ in selected_by_track
@@ -171,12 +146,9 @@ def decode_capture_frames(
                 )
                 if person_box is None:
                     continue
-                crop_box, screen_polygon = crop_specs[track_id]
                 evidence = build_capture_frame(
                     frame,
-                    crop_box=crop_box,
-                    person_box=person_box,
-                    screen_polygon=screen_polygon,
+                    crop_box=crop_specs[track_id],
                 )
                 transported = io.BytesIO()
                 evidence.save(transported, format="JPEG", quality=92)
@@ -358,7 +330,7 @@ def _joint_crop_box(
     *,
     frame_width: int,
     frame_height: int,
-    margin_ratio: float = 0.15,
+    margin_ratio: float = CAPTURE_CROP_MARGIN_RATIO,
 ) -> tuple[int, int, int, int]:
     xs = [float(box[0]) for box in person_boxes] + [
         float(box[2]) for box in person_boxes
