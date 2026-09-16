@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "camera": "camera15",
+  "frame_width": 2560,
+  "frame_height": 1440,
+  "source_calibration_sha256": "cc533b1266cb8cbc116e613e3318eeecd6bda5e49f79a737b78c4d0c5bb64b8a",
+  "calibration_status": "screen-polygons-and-near-zones-only",
+  "screens": [
+    {
+      "screen_id": "screen_01",
+      "screen_polygon": [
+        [
+          1624.29,
+          161.25
+        ],
+        [
+          1743.27,
+          147.86
+        ],
+        [
+          1747.52,
+          223.17
+        ],
+        [
+          1614.99,
+          243.25
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_01_calibrated_near_zone",
+          "polygon": [
+            [
+              1455.95,
+              62.01
+            ],
+            [
+              1906.56,
+              62.01
+            ],
+            [
+              1906.56,
+              329.1
+            ],
+            [
+              1455.95,
+              329.1
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_01_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_02",
+      "screen_polygon": [
+        [
+          1969.31,
+          224.3
+        ],
+        [
+          2088.4,
+          222.57
+        ],
+        [
+          2085.32,
+          308.56
+        ],
+        [
+          1963.86,
+          305.75
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_02_calibrated_near_zone",
+          "polygon": [
+            [
+              1814.41,
+              145.18
+            ],
+            [
+              2237.85,
+              145.18
+            ],
+            [
+              2237.85,
+              385.95
+            ],
+            [
+              1814.41,
+              385.95
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_02_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "occluders": []
+}

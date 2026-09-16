@@ -1,0 +1,691 @@
+{
+  "schema_version": 1,
+  "camera": "camera10",
+  "frame_width": 2560,
+  "frame_height": 1440,
+  "source_calibration_sha256": "7bddb4e571f0ae7e3ee485a22f139ade63d3ec4fd90f655fbdbf682dc7ab9256",
+  "calibration_status": "screen-polygons-and-near-zones-only",
+  "screens": [
+    {
+      "screen_id": "screen_01",
+      "screen_polygon": [
+        [
+          343.53,
+          557.86
+        ],
+        [
+          585.54,
+          494.49
+        ],
+        [
+          592.42,
+          588.44
+        ],
+        [
+          350.75,
+          632.93
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_01_calibrated_near_zone",
+          "polygon": [
+            [
+              44.86,
+              369.89
+            ],
+            [
+              891.09,
+              369.89
+            ],
+            [
+              891.09,
+              757.53
+            ],
+            [
+              44.86,
+              757.53
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_01_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_02",
+      "screen_polygon": [
+        [
+          1026.19,
+          480.69
+        ],
+        [
+          1287.25,
+          501.16
+        ],
+        [
+          1297.76,
+          608.39
+        ],
+        [
+          1026.69,
+          584.98
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_02_calibrated_near_zone",
+          "polygon": [
+            [
+              700.31,
+              365.76
+            ],
+            [
+              1623.64,
+              365.76
+            ],
+            [
+              1623.64,
+              723.32
+            ],
+            [
+              700.31,
+              723.32
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_02_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_03",
+      "screen_polygon": [
+        [
+          1367.08,
+          535.33
+        ],
+        [
+          1603.23,
+          503.78
+        ],
+        [
+          1622.85,
+          607.49
+        ],
+        [
+          1379.85,
+          618.37
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_03_calibrated_near_zone",
+          "polygon": [
+            [
+              1060.16,
+              400.65
+            ],
+            [
+              1929.77,
+              400.65
+            ],
+            [
+              1929.77,
+              721.5
+            ],
+            [
+              1060.16,
+              721.5
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_03_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_04",
+      "screen_polygon": [
+        [
+          2064.3,
+          506.3
+        ],
+        [
+          2254.42,
+          561.79
+        ],
+        [
+          2246.31,
+          657.84
+        ],
+        [
+          2059.28,
+          600.3
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_04_calibrated_near_zone",
+          "polygon": [
+            [
+              1825.11,
+              369.91
+            ],
+            [
+              2488.59,
+              369.91
+            ],
+            [
+              2488.59,
+              794.23
+            ],
+            [
+              1825.11,
+              794.23
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_04_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_05",
+      "screen_polygon": [
+        [
+          879.42,
+          1439.61
+        ],
+        [
+          1173.37,
+          1283.15
+        ],
+        [
+          1178.53,
+          1431.72
+        ],
+        [
+          998.46,
+          1438.25
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_05_calibrated_near_zone",
+          "polygon": [
+            [
+              520.49,
+              1142.34
+            ],
+            [
+              1537.46,
+              1142.34
+            ],
+            [
+              1537.46,
+              1440
+            ],
+            [
+              520.49,
+              1440
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_05_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_06",
+      "screen_polygon": [
+        [
+          1420.04,
+          1317.78
+        ],
+        [
+          1525.15,
+          1365.27
+        ],
+        [
+          1647.37,
+          1440
+        ],
+        [
+          1407.74,
+          1433.99
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_06_calibrated_near_zone",
+          "polygon": [
+            [
+              1120.18,
+              1207.78
+            ],
+            [
+              1934.93,
+              1207.78
+            ],
+            [
+              1934.93,
+              1440
+            ],
+            [
+              1120.18,
+              1440
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_06_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_07",
+      "screen_polygon": [
+        [
+          772.26,
+          325.13
+        ],
+        [
+          937.71,
+          305.54
+        ],
+        [
+          952.61,
+          378.86
+        ],
+        [
+          766.99,
+          404.12
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_07_calibrated_near_zone",
+          "polygon": [
+            [
+              544.25,
+              216.82
+            ],
+            [
+              1175.35,
+              216.82
+            ],
+            [
+              1175.35,
+              492.84
+            ],
+            [
+              544.25,
+              492.84
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_07_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_08",
+      "screen_polygon": [
+        [
+          1163.29,
+          277.19
+        ],
+        [
+          1244.49,
+          283.3
+        ],
+        [
+          1261.94,
+          351.09
+        ],
+        [
+          1153.29,
+          344.53
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_08_calibrated_near_zone",
+          "polygon": [
+            [
+              1022.91,
+              210.68
+            ],
+            [
+              1392.32,
+              210.68
+            ],
+            [
+              1392.32,
+              417.6
+            ],
+            [
+              1022.91,
+              417.6
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_08_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_09",
+      "screen_polygon": [
+        [
+          1333.08,
+          324.09
+        ],
+        [
+          1418.38,
+          322.12
+        ],
+        [
+          1420.46,
+          384.34
+        ],
+        [
+          1331.26,
+          386.83
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_09_calibrated_near_zone",
+          "polygon": [
+            [
+              1224.22,
+              263.88
+            ],
+            [
+              1527.5,
+              263.88
+            ],
+            [
+              1527.5,
+              445.07
+            ],
+            [
+              1224.22,
+              445.07
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_09_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "screen_id": "screen_10",
+      "screen_polygon": [
+        [
+          1689.86,
+          304.71
+        ],
+        [
+          1847.54,
+          323.72
+        ],
+        [
+          1835.43,
+          395.61
+        ],
+        [
+          1690.06,
+          363.4
+        ]
+      ],
+      "capture_position_zones": [
+        {
+          "zone_id": "screen_10_calibrated_near_zone",
+          "polygon": [
+            [
+              1500.64,
+              222.9
+            ],
+            [
+              2036.76,
+              222.9
+            ],
+            [
+              2036.76,
+              477.42
+            ],
+            [
+              1500.64,
+              477.42
+            ]
+          ]
+        }
+      ],
+      "blocked_position_zones": [],
+      "unknown_position_zones": [
+        {
+          "zone_id": "screen_10_unverified_rest",
+          "polygon": [
+            [
+              0,
+              0
+            ],
+            [
+              2560,
+              0
+            ],
+            [
+              2560,
+              1440
+            ],
+            [
+              0,
+              1440
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "occluders": []
+}
