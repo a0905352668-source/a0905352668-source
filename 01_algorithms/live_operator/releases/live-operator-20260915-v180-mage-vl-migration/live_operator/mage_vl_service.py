@@ -22,9 +22,11 @@ import shutil
 import socket
 import ssl
 import stat
+import sys
 import tempfile
 import threading
 import time
+import traceback
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1723,8 +1725,22 @@ def make_handler(application: ReviewApplication):
                     failed = True
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid review input"})
                     return
-                except Exception:
+                except Exception as error:
                     failed = True
+                    if kind == "offline":
+                        frames = traceback.extract_tb(error.__traceback__)
+                        location = frames[-1] if frames else None
+                        where = (
+                            f"{Path(location.filename).name}:{location.lineno}:"
+                            f"{location.name}"
+                            if location is not None
+                            else "unknown"
+                        )
+                        print(
+                            f"capture review failed: {type(error).__name__} at {where}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                     self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "review failed"})
                     return
                 self._json(
