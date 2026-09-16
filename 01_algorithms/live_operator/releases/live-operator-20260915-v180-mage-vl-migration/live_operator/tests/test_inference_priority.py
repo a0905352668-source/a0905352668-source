@@ -52,9 +52,11 @@ def test_production_can_start_without_waiting_for_quiet_time() -> None:
     gate = ProductionFirstGate(clock, quiet_seconds=30.0)
 
     gate.production_arrived()
+    assert gate.snapshot()["production_waiting"] == 1
     lease = gate.try_acquire("production")
 
     assert lease is not None
+    assert gate.snapshot()["production_waiting"] == 0
     lease.release(latency_seconds=1.25)
 
 

@@ -192,6 +192,27 @@ def capture_request_id(
     return digest.hexdigest()
 
 
+def _resource_health() -> dict[str, Any]:
+    """Expose a cheap host-memory guard without spawning monitoring processes."""
+
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            name, raw = line.split(":", 1)
+            token = raw.strip().split()[0]
+            values[name] = int(token) * 1024
+    except (OSError, UnicodeDecodeError, ValueError, IndexError):
+        return {"known": False, "memory_pressure": False}
+    available = values.get("MemAvailable", 0)
+    return {
+        "known": available > 0,
+        "memory_available_bytes": available,
+        "swap_free_bytes": values.get("SwapFree", 0),
+        "swap_total_bytes": values.get("SwapTotal", 0),
+        "memory_pressure": available > 0 and available < 2 * 1024 * 1024 * 1024,
+    }
+
+
 def _model_directory_fingerprint(model_path: Path) -> str:
     """Hash the immutable local checkpoint and its executable remote code."""
 
@@ -990,6 +1011,7 @@ class ReviewApplication:
             "capture_prompt_revision": CAPTURE_PROMPT_REVISION,
             "capture_evidence_revision": CAPTURE_EVIDENCE_REVISION,
             "scheduler": self.priority.snapshot(),
+            "resource_health": _resource_health(),
         }
 
     def authenticate(self, timestamp: str | None, signature: str | None, body: bytes) -> bool:

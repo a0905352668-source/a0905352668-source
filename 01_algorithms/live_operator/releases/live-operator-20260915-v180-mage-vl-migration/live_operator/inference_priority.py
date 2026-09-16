@@ -32,6 +32,7 @@ class ProductionFirstGate:
         self._lock = threading.Lock()
         self._active: GateLease | None = None
         self._last_production_at = float(clock())
+        self._production_waiting = 0
         self._admitted = {"production": 0, "offline": 0}
         self._rejected = {"production": 0, "offline": 0}
         self._errors = {"production": 0, "offline": 0}
@@ -44,6 +45,7 @@ class ProductionFirstGate:
     def production_arrived(self) -> None:
         with self._lock:
             self._last_production_at = float(self._clock())
+            self._production_waiting += 1
             if self._active is not None and self._active.kind == "offline":
                 self._active.cancelled.set()
 
@@ -52,6 +54,8 @@ class ProductionFirstGate:
             raise ValueError("invalid inference kind")
         with self._lock:
             now = float(self._clock())
+            if kind == "production" and self._production_waiting:
+                self._production_waiting -= 1
             if self._active is not None:
                 self._rejected[kind] += 1
                 return None
@@ -74,6 +78,7 @@ class ProductionFirstGate:
             )
             return {
                 "active_kind": None if self._active is None else self._active.kind,
+                "production_waiting": self._production_waiting,
                 "offline_cancel_requested": bool(
                     self._active is not None
                     and self._active.kind == "offline"
