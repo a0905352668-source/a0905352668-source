@@ -9,6 +9,7 @@ import threading
 import zipfile
 
 import pytest
+from live_operator import mage_vl_service as service_module
 
 from live_operator.capture_evidence import CAPTURE_EVIDENCE_REVISION
 from live_operator.mage_vl_service import (
@@ -430,20 +431,32 @@ def test_reviewer_initializes_production_and_capture_prompts_but_one_model(
     assert reviewer.chat_text == "chat-1"
     assert reviewer.focus_chat_text == "chat-2"
     assert reviewer.early_rescue_chat_text == "chat-3"
-    assert reviewer.capture_chat_text == "chat-4"
+    assert reviewer.capture_chat_texts['exclusion'] == "chat-4"
+    assert reviewer.capture_chat_texts['direction'] == "chat-5"
     prompt_texts = [call[0]["content"][1]["text"] for call in processor.calls]
     assert prompt_texts == [
         NATIVE_PROMPT,
         FOCUS_PROMPT,
         EARLY_RESCUE_PROMPT,
         CAPTURE_PROMPT,
+        service_module.CAPTURE_DIRECTION_PROMPT,
     ]
 
 
-def test_capture_prompt_uses_confirmed_phone_joint_crop_video() -> None:
-    normalized = " ".join(CAPTURE_PROMPT.split())
-    assert "already confirmed" in normalized
-    assert "Do not re-evaluate whether the object is a phone" in normalized
-    assert "chronological short video" in normalized
-    assert "same target person and the associated nearest protected screen" in normalized
-    assert "phone/hand detail" not in normalized
+def test_capture_prompt_variant_defaults_and_rejects_unknown_names() -> None:
+    assert service_module.capture_prompt_variant({}) == 'exclusion'
+    assert service_module.capture_prompt_variant({'capture_prompt_variant': 'direction'}) == 'direction'
+    with pytest.raises(ValueError):
+        service_module.capture_prompt_variant({'capture_prompt_variant': 'custom-unsafe-prompt'})
+
+
+@pytest.mark.parametrize('raw,want', [
+    ('LABEL=CAPTURE_POSSIBLE', ('CAPTURE_POSSIBLE', True)),
+    ('LABEL=IMPOSSIBLE_BLOCKED', ('IMPOSSIBLE_BLOCKED', True)),
+    ('LABEL=UNCERTAIN', ('UNCERTAIN', True)),
+    ('LABEL=IMPOSSIBLE_AWAY_FROM_SCREEN', ('UNCERTAIN', False)),
+    ('LABEL=NOT_PHONE_OR_NO_CAPTURE_ACTION', ('UNCERTAIN', False)),
+    ('unparseable answer', ('UNCERTAIN', False)),
+])
+def test_capture_output_cannot_exclude_by_retired_away_or_phone_identity(raw, want) -> None:
+    assert service_module.normalize_capture_output(raw) == want

@@ -120,10 +120,6 @@ def test_decode_selects_30_distinct_chronological_joint_crop_frames(
 
     sequences = decode_capture_frames(video, _overlay(), _visibility())
 
-    assert (
-        CAPTURE_EVIDENCE_REVISION
-        == "person-nearest-screen-clean-span5s-30f-margin25-jpeg92-v3"
-    )
     assert CAPTURE_FRAME_COUNT == 30
     assert len(sequences) == 1
     sequence = sequences[0]
@@ -151,3 +147,51 @@ def test_missing_screen_annotation_returns_no_evidence(tmp_path: Path) -> None:
     visibility["screens"] = []
 
     assert decode_capture_frames(video, _overlay(), visibility) == ()
+
+
+def test_stale_screen_id_does_not_replace_two_nearby_screen_candidates(tmp_path: Path) -> None:
+    video = _synthetic_video(tmp_path / "stale-screen.avi")
+    visibility = _visibility()
+    visibility['screens'] = [
+        {'screen_id': 'screen-1', 'screen_polygon': [[10, 10], [30, 10], [30, 30], [10, 30]]},
+        {'screen_id': 'right-a', 'screen_polygon': [[220, 70], [250, 70], [250, 150], [220, 150]]},
+        {'screen_id': 'right-b', 'screen_polygon': [[260, 70], [290, 70], [290, 150], [260, 150]]},
+    ]
+
+    sequence = decode_capture_frames(video, _overlay(), visibility)[0]
+
+    assert sequence.screen_ids == ('right-a', 'right-b')
+    assert sequence.crop_box == (65, 25, 320, 235)
+
+
+def test_screen_candidates_scale_phone_coordinates_to_video(tmp_path: Path) -> None:
+    video = _synthetic_video(tmp_path / 'scaled.avi')
+    overlay = _overlay()
+    for entry in overlay['bbox_timeline']:
+        entry['frame_width'], entry['frame_height'] = 640, 480
+        entry['bbox'] = [v * 2 for v in entry['bbox']]
+        entry['phone_boxes'][0]['box'] = [v * 2 for v in entry['phone_boxes'][0]['box']]
+    sequence = decode_capture_frames(video, overlay, _visibility())[0]
+    assert sequence.screen_ids == ('screen-1',)
+    assert sequence.crop_box == (0, 0, 260, 240)
+
+
+def test_crop_limits_candidates_to_three_nearby_screens(tmp_path: Path) -> None:
+    video = _synthetic_video(tmp_path / 'three-screens.avi')
+    visibility = _visibility()
+    visibility['screens'] = [
+        {'screen_id': f'near-{i}', 'screen_polygon': [[220+i*20, 70], [230+i*20, 70], [230+i*20, 150], [220+i*20, 150]]}
+        for i in range(4)
+    ]
+    sequence = decode_capture_frames(video, _overlay(), visibility)[0]
+    assert sequence.screen_ids == ('near-0', 'near-1', 'near-2')
+
+
+def test_unavailable_phone_boxes_fall_back_to_person_geometry(tmp_path: Path) -> None:
+    video = _synthetic_video(tmp_path / 'no-phone-box.avi')
+    overlay = _overlay()
+    for entry in overlay['bbox_timeline']:
+        entry['phone_boxes'] = None
+    sequence = decode_capture_frames(video, overlay, _visibility())[0]
+    assert sequence.screen_ids == ('screen-1',)
+    assert len(sequence.frames) == 30

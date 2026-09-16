@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import io
 import math
+import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
 CAPTURE_FRAME_COUNT = 30
 CAPTURE_CROP_MARGIN_RATIO = 0.25
-CAPTURE_EVIDENCE_REVISION = "person-nearest-screen-clean-span5s-30f-margin25-jpeg92-v3"
+CAPTURE_EVIDENCE_REVISION = "person-nearby-screens-clean-span5s-30f-margin25-jpeg92-v4"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,8 @@ class CaptureSequence:
     frames: tuple[Any, ...]
     source_frame_indices: tuple[int, ...]
     times: tuple[float, ...]
+    screen_ids: tuple[str, ...] = ()
+    crop_box: tuple[int, int, int, int] | None = None
 
 
 def build_capture_frame(
@@ -90,6 +93,7 @@ def decode_capture_frames(
             visibility, video_width=width, video_height=height
         )
         crop_specs: dict[str, tuple[int, int, int, int]] = {}
+        screen_specs: dict[str, tuple[str, ...]] = {}
         for track_id, entries in selected_by_track:
             person_boxes = [
                 box
@@ -104,12 +108,19 @@ def decode_capture_frames(
                 )
                 is not None
             ]
-            screen_polygon = _associated_screen(entries, screen_polygons, person_boxes)
-            if not person_boxes or screen_polygon is None:
+            candidates = _associated_screens(
+                entries,
+                screen_polygons,
+                person_boxes,
+                video_width=width,
+                video_height=height,
+            )
+            if not person_boxes or not candidates:
                 continue
+            screen_specs[track_id] = tuple(candidates)
             crop_specs[track_id] = _joint_crop_box(
                 person_boxes,
-                screen_polygon,
+                tuple(point for polygon in candidates.values() for point in polygon),
                 frame_width=width,
                 frame_height=height,
             )
@@ -167,6 +178,8 @@ def decode_capture_frames(
                         frames=tuple(item[0] for item in ordered),
                         source_frame_indices=tuple(item[1] for item in ordered),
                         times=tuple(item[2] for item in ordered),
+                        screen_ids=screen_specs[track_id],
+                        crop_box=crop_specs[track_id],
                     )
                 )
         return tuple(sequences)
@@ -300,28 +313,55 @@ def _visibility_screens(
     return screens
 
 
-def _associated_screen(
+def _associated_screens(
     entries: Sequence[tuple[int, float, Mapping[str, Any]]],
     screens: Mapping[str, tuple[tuple[float, float], ...]],
     person_boxes: Sequence[tuple[int, int, int, int]],
-) -> tuple[tuple[float, float], ...] | None:
-    for _frame_index, _time_sec, entry in sorted(
-        entries, key=lambda item: item[2].get("alarm") is not True
-    ):
-        screen_id = entry.get("screen_id")
-        if isinstance(screen_id, str) and screen_id in screens:
-            return screens[screen_id]
+    *,
+    video_width: int,
+    video_height: int,
+) -> dict[str, tuple[tuple[float, float], ...]]:
+    # Historical IDs are not spatial evidence. Keep nearby alternatives, not one
+    # assumed target. This is a 2-D crop heuristic, never a visibility verdict.
     if not screens or not person_boxes:
-        return None
-    left, top, right, bottom = person_boxes[len(person_boxes) // 2]
-    person_center = ((left + right) / 2, (top + bottom) / 2)
+        return {}
+    phone_centers = []
+    for _, _, entry in entries:
+        raw_phones = entry.get("phone_boxes")
+        if not isinstance(raw_phones, list):
+            continue
+        for phone in raw_phones:
+            if not isinstance(phone, Mapping) or phone.get("accepted") is not True:
+                continue
+            box = _scaled_box(
+                phone.get("box"), entry,
+                video_width=video_width, video_height=video_height,
+            )
+            if box:
+                phone_centers.append(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2))
+    centers = phone_centers or [
+        ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in person_boxes
+    ]
+    x, y = (statistics.median(p[i] for p in centers) for i in (0, 1))
 
     def distance(polygon: Sequence[tuple[float, float]]) -> float:
-        center_x = sum(point[0] for point in polygon) / len(polygon)
-        center_y = sum(point[1] for point in polygon) / len(polygon)
-        return (center_x - person_center[0]) ** 2 + (center_y - person_center[1]) ** 2
+        # Point-to-polygon distance; large adjacent screens must not lose merely
+        # because their centroid is farther away than a small background screen.
+        inside = False
+        minimum = math.inf
+        for a, b in zip(polygon, (*polygon[1:], polygon[0])):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            length = dx * dx + dy * dy
+            t = max(0.0, min(1.0, ((x-a[0])*dx + (y-a[1])*dy) / length)) if length else 0.0
+            minimum = min(minimum, math.hypot(x-a[0]-t*dx, y-a[1]-t*dy))
+            if (a[1] > y) != (b[1] > y) and x < dx * (y-a[1]) / dy + a[0]:
+                inside = not inside
+        return 0.0 if inside else minimum
 
-    return min(screens.values(), key=distance)
+    ranked = sorted(screens, key=lambda sid: (distance(screens[sid]), sid))
+    allowance = max(24.0, statistics.median(b[3] - b[1] for b in person_boxes) * 0.5)
+    limit = distance(screens[ranked[0]]) + allowance
+    return {sid: screens[sid] for sid in ranked[:3] if distance(screens[sid]) <= limit}
 
 
 def _joint_crop_box(

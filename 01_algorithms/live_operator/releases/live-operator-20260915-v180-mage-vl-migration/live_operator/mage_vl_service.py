@@ -126,43 +126,58 @@ PROMPT = (
 )
 PROMPT_REVISION = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
 
-CAPTURE_PROMPT = """You review a chronological short video after stage one has already confirmed
-that the target person is actively using a genuine phone. Do not re-evaluate whether
-the object is a phone. Every frame is one stable joint crop containing the same target
-person and the associated nearest protected screen, without detection-box overlays.
+_CAPTURE_CONTEXT = """Review a chronological short video. Stage one has already confirmed
+that the event person uses a genuine phone; do not re-check phone identity.
+The stable, unmarked crop contains that person and up to three nearby candidate
+screens. These are spatial candidates, NOT a proven target or a 3-D visibility map.
+First relate the phone holder to nearby screens in the actual video. Do not assume
+that the nearest screen, the largest screen, or another person's monitor is the target.
+Consider ALL visible screens that the phone could capture, not just one selected screen.
+If the target person or relevant screen cannot be identified, retain as UNCERTAIN.
+Do not guess the camera direction from a visible phone display, the person's body
+direction, or a 2-D distance. A phone display facing the person is compatible with
+the rear camera facing a monitor. A missing shutter press, looking/tapping at the
+phone, lack of a typical gesture, or a low phone alone is not grounds for exclusion.
+Assess the whole sequence: any raised/aiming moment or plausible capture opportunity
+overrides non-capture-looking moments. Small, blurred, partial, or conflicting evidence
+must be retained. No detection overlays or phone-detail inset are provided.
+"""
+_CAPTURE_CHOICES = """
+Choose one label:
+CAPTURE_POSSIBLE: a plausible opportunity to capture any nearby screen occurs.
+UNCERTAIN: direction, spatial relationship, action, or visibility is inconclusive;
+this retains the event. Failure to establish capture is NOT evidence for exclusion.
+IMPOSSIBLE_FLAT_OR_DOWN: clearly visible geometry throughout the sequence shows the
+phone lying flat or aimed down at the desk/floor with no screen-capture opportunity;
+there is no conflicting raising/aiming moment. Holding it low alone is insufficient.
+IMPOSSIBLE_BLOCKED: a clearly identified opaque obstacle continuously blocks the
+phone's view of ALL plausible nearby target screens, with no unobstructed moment.
+Return exactly one ASCII line and nothing else: LABEL=<label>."""
+CAPTURE_PROMPT = _CAPTURE_CONTEXT + """
+Task: reliably exclude only the two explicit non-capture situations below. Do not
+classify 'facing away from screen' and do not infer unseen lens orientation.
+If neither situation is clearly established, use CAPTURE_POSSIBLE or UNCERTAIN.
+""" + _CAPTURE_CHOICES
+CAPTURE_DIRECTION_PROMPT = _CAPTURE_CONTEXT + """
+Task: does the phone's placement, visible orientation, and movement suggest that it
+could be pointed toward ANY nearby screen? Look for the phone being lifted or held
+between the person and a monitor, repositioned toward a screen, or stabilized near
+screen-facing height. These support CAPTURE_POSSIBLE even without proof of recording.
+Assess possible pointing, not whether capture definitely occurred. If orientation
+cannot be resolved, use UNCERTAIN; 'not visibly pointing' alone must NOT exclude.
+Do not classify 'facing away'. Only the two explicit situations below allow exclusion.
+""" + _CAPTURE_CHOICES
+CAPTURE_PROMPTS = {'exclusion': CAPTURE_PROMPT, 'direction': CAPTURE_DIRECTION_PROMPT}
+CAPTURE_PROMPT_REVISION = hashlib.sha256(
+    json.dumps(CAPTURE_PROMPTS, sort_keys=True).encode('utf-8')
+).hexdigest()
 
-Your task is to identify events that can be reliably excluded from screen capture,
-not to demand proof that a person is actually taking a photograph. Consider the phone
-pose and direction, its position relative to the protected screen, movement over time,
-and opaque obstacles such as partitions. Exclude an event only when clear visual
-evidence supports a phone-use behavior unrelated to capturing the screen and there
-are no conflicting signs. Retain events with a plausible screen-capture opportunity
-or with insufficient evidence for reliable exclusion.
 
-Absence of a shutter press or a typical photography gesture is not an exclusion
-reason. Looking at the phone, tapping it, or holding it low alone does not rule out
-screen capture. A visible phone display does not by itself establish where the rear
-camera points. Do not infer that the lens faces away when the phone front/back or
-camera direction is unclear. Do not treat an obstacle as blocking unless its position
-actually obstructs the phone-to-screen view. You need not establish that recording
-started or that a photograph succeeded.
-
-Choose exactly one decision:
-- CAPTURE_POSSIBLE: the pose, position, or movement makes screen capture plausible,
-  even if no shutter action is visible.
-- IMPOSSIBLE_FLAT_OR_DOWN: clear pose and spatial evidence support exclusion because
-  the camera is directed toward the desk/floor rather than the protected screen,
-  without conflicting aiming or capture signs. Low position alone is insufficient.
-- IMPOSSIBLE_AWAY_FROM_SCREEN: clear camera-direction and spatial evidence support
-  exclusion because it faces away from the protected screen, without conflicting signs.
-- IMPOSSIBLE_BLOCKED: a clearly positioned opaque obstacle obstructs the camera view
-  of the protected screen, without conflicting unobstructed capture signs.
-- UNCERTAIN: the phone direction, action, spatial relation, or obstruction is ambiguous,
-  or the visual evidence is too small, blurred, incomplete, or conflicting to exclude
-  screen capture reliably. This decision retains the event.
-
-Return exactly one ASCII line and nothing else: LABEL=<decision>."""
-CAPTURE_PROMPT_REVISION = hashlib.sha256(CAPTURE_PROMPT.encode("utf-8")).hexdigest()
+def capture_prompt_variant(visibility: Mapping[str, Any]) -> str:
+    variant = visibility.get('capture_prompt_variant', 'exclusion')
+    if not isinstance(variant, str) or variant not in CAPTURE_PROMPTS:
+        raise ValueError('unknown offline capture prompt variant')
+    return variant
 
 _LABEL_PATTERN = re.compile(
     r"(?:LABEL=)?(KEEP_NON_CALL_PHONE_USE|FILTER_FALSE_POSITIVE|UNCERTAIN)\Z"
@@ -187,6 +202,15 @@ _CAPTURE_LABEL_PATTERN = re.compile(
     r"IMPOSSIBLE_AWAY_FROM_SCREEN|IMPOSSIBLE_BLOCKED|"
     r"NOT_PHONE_OR_NO_CAPTURE_ACTION|UNCERTAIN)\Z"
 )
+
+
+def normalize_capture_output(raw: str) -> tuple[str, bool]:
+    match = _CAPTURE_LABEL_PATTERN.fullmatch(raw.strip())
+    if not match or match.group(1) in {'IMPOSSIBLE_AWAY_FROM_SCREEN', 'NOT_PHONE_OR_NO_CAPTURE_ACTION'}:
+        return 'UNCERTAIN', False
+    return match.group(1), True
+
+
 _SAFE_EVENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_REQUEST_ID = re.compile(r"[A-Fa-f0-9]{64}\Z")
 _EXPECTED_ARCHIVE_MEMBERS = frozenset({"request.json", "clip.mp4", "overlay.json"})
@@ -860,7 +884,7 @@ class MageVLReviewer:
         self.chat_text = chat_text(NATIVE_PROMPT)
         self.focus_chat_text = chat_text(FOCUS_PROMPT)
         self.early_rescue_chat_text = chat_text(EARLY_RESCUE_PROMPT)
-        self.capture_chat_text = chat_text(CAPTURE_PROMPT)
+        self.capture_chat_texts = {name: chat_text(prompt) for name, prompt in CAPTURE_PROMPTS.items()}
 
     @staticmethod
     def _load_model(model_path: Path, gpu_weight_memory: str, cpu_memory: str):
@@ -1072,6 +1096,10 @@ class MageVLReviewer:
         import torch
         from transformers import StoppingCriteria, StoppingCriteriaList
 
+        variant = 'exclusion'
+        raw_outputs: list[str] = []
+        parsed_outputs: list[bool] = []
+
         def result(
             label: str,
             *,
@@ -1089,6 +1117,9 @@ class MageVLReviewer:
                 "candidate_count": candidate_count,
                 "candidate_labels": labels,
                 "evidence_complete": complete,
+                "prompt_variant": variant,
+                "candidate_outputs": list(raw_outputs),
+                "candidate_output_parsed": list(parsed_outputs),
             }
 
         if cancel_event.is_set():
@@ -1100,6 +1131,7 @@ class MageVLReviewer:
             visibility = json.loads(visibility_path.read_text(encoding="utf-8"))
             if not isinstance(overlay, dict) or not isinstance(visibility, dict):
                 raise ValueError("capture metadata must be objects")
+            variant = capture_prompt_variant(visibility)
             sequences = decode_capture_frames(video_path, overlay, visibility)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             return result(
@@ -1130,7 +1162,7 @@ class MageVLReviewer:
                     if len(sequence.frames) != CAPTURE_FRAME_COUNT:
                         continue
                     inputs = self.processor(
-                        text=[self.capture_chat_text],
+                        text=[self.capture_chat_texts[variant]],
                         videos=[list(sequence.frames)],
                         return_tensors="pt",
                         padding=True,
@@ -1165,8 +1197,9 @@ class MageVLReviewer:
                         output[0, inputs["input_ids"].shape[1] :],
                         skip_special_tokens=True,
                     ).strip()
-                    match = _CAPTURE_LABEL_PATTERN.fullmatch(raw)
-                    label = match.group(1) if match else "UNCERTAIN"
+                    label, parsed = normalize_capture_output(raw)
+                    raw_outputs.append(raw[:256])
+                    parsed_outputs.append(parsed)
                     labels.append(label)
                     del output, inputs
                     gc.collect()
