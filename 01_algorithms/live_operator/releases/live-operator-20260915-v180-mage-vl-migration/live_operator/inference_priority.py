@@ -29,18 +29,20 @@ class ProductionFirstGate:
         cancel_offline_on_production: bool = True,
         reserve_offline_turn: bool = False,
         offline_reservation_seconds: float = 5.0,
+        production_turn_seconds: float = 5.0,
     ) -> None:
         self._clock = clock
         self.quiet_seconds = float(quiet_seconds)
         self.cancel_offline_on_production = bool(cancel_offline_on_production)
         self.reserve_offline_turn = bool(reserve_offline_turn)
         self.offline_reservation_seconds = float(offline_reservation_seconds)
+        self.production_turn_seconds = float(production_turn_seconds)
         self._lock = threading.Lock()
         self._active: GateLease | None = None
         self._last_production_at = float(clock())
         self._production_waiting = 0
         self._offline_reserved_until: float | None = None
-        self._production_turn = False
+        self._production_turn_until: float | None = None
         self._admitted = {"production": 0, "offline": 0}
         self._rejected = {"production": 0, "offline": 0}
         self._errors = {"production": 0, "offline": 0}
@@ -63,9 +65,10 @@ class ProductionFirstGate:
 
     def offline_arrived(self) -> None:
         with self._lock:
-            if self.reserve_offline_turn and not self._production_turn:
+            now = float(self._clock())
+            if self.reserve_offline_turn and not self._production_turn_at(now):
                 self._offline_reserved_until = (
-                    float(self._clock()) + self.offline_reservation_seconds
+                    now + self.offline_reservation_seconds
                 )
 
     def try_acquire(self, kind: WorkKind) -> GateLease | None:
@@ -74,13 +77,14 @@ class ProductionFirstGate:
         with self._lock:
             now = float(self._clock())
             offline_reserved = self._offline_reserved_at(now)
+            production_turn = self._production_turn_at(now)
             if self._active is not None:
                 self._rejected[kind] += 1
                 return None
             if kind == "production" and offline_reserved:
                 self._rejected[kind] += 1
                 return None
-            if kind == "offline" and self._production_turn:
+            if kind == "offline" and production_turn:
                 self._rejected[kind] += 1
                 return None
             if (
@@ -91,7 +95,7 @@ class ProductionFirstGate:
                 return None
             if kind == "production" and self._production_waiting:
                 self._production_waiting -= 1
-                self._production_turn = False
+                self._production_turn_until = None
             if kind == "offline":
                 self._offline_reserved_until = None
             lease = GateLease(self, kind)
@@ -110,7 +114,7 @@ class ProductionFirstGate:
                 "active_kind": None if self._active is None else self._active.kind,
                 "production_waiting": self._production_waiting,
                 "offline_reserved": self._offline_reserved_at(now),
-                "production_turn": self._production_turn,
+                "production_turn": self._production_turn_at(now),
                 "offline_cancel_requested": bool(
                     self._active is not None
                     and self._active.kind == "offline"
@@ -140,6 +144,14 @@ class ProductionFirstGate:
             return False
         return True
 
+    def _production_turn_at(self, now: float) -> bool:
+        if self._production_turn_until is None:
+            return False
+        if now >= self._production_turn_until:
+            self._production_turn_until = None
+            return False
+        return True
+
     def _release(
         self,
         lease: GateLease,
@@ -155,7 +167,9 @@ class ProductionFirstGate:
             lease._released = True
             self._active = None
             if lease.kind == "offline" and self._production_waiting:
-                self._production_turn = True
+                self._production_turn_until = (
+                    float(self._clock()) + self.production_turn_seconds
+                )
             self._latency_seconds[lease.kind] += float(latency_seconds)
             self._last_latency_seconds[lease.kind] = float(latency_seconds)
             if error:

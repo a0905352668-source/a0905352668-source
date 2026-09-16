@@ -126,6 +126,29 @@ def test_abandoned_offline_reservation_expires() -> None:
     production.release(latency_seconds=0.5)
 
 
+def test_abandoned_production_turn_expires() -> None:
+    clock = FakeClock()
+    gate = ProductionFirstGate(
+        clock,
+        quiet_seconds=0.0,
+        cancel_offline_on_production=False,
+        reserve_offline_turn=True,
+        production_turn_seconds=5.0,
+    )
+    offline = gate.try_acquire("offline")
+    assert offline is not None
+    gate.production_arrived()
+    offline.release(latency_seconds=1.0)
+
+    clock.advance(5.001)
+    gate.offline_arrived()
+    next_offline = gate.try_acquire("offline")
+
+    assert next_offline is not None
+    assert gate.snapshot()["production_turn"] is False
+    next_offline.release(latency_seconds=1.0)
+
+
 def test_production_can_start_without_waiting_for_quiet_time() -> None:
     clock = FakeClock()
     gate = ProductionFirstGate(clock, quiet_seconds=30.0)
