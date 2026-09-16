@@ -1,4 +1,4 @@
-"""Chronological full-scene evidence for offline capture review."""
+"""Chronological person-and-screen crop evidence for capture review."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-CAPTURE_EVIDENCE_REVISION = "scene-person-phone-span5s-16f-jpeg92-v1"
+CAPTURE_FRAME_COUNT = 30
+CAPTURE_EVIDENCE_REVISION = "person-nearest-screen-span5s-30f-jpeg92-v2"
 
 
 @dataclass(frozen=True)
@@ -20,13 +21,12 @@ class CaptureSequence:
     times: tuple[float, ...]
 
 
-def build_capture_panel(
+def build_capture_frame(
     full_frame: Any,
     *,
+    crop_box: tuple[int, int, int, int],
     person_box: tuple[int, int, int, int],
-    phone_box: tuple[int, int, int, int] | None,
-    screen_polygons: Sequence[Sequence[tuple[float, float]]],
-    occluder_polygons: Sequence[Sequence[tuple[float, float]]],
+    screen_polygon: Sequence[tuple[float, float]],
     image_size: int = 448,
 ) -> Any:
     from PIL import Image, ImageDraw
@@ -34,64 +34,40 @@ def build_capture_panel(
     if image_size <= 0:
         raise ValueError("image_size must be positive")
     frame = full_frame.convert("RGB")
-    panel = Image.new("RGB", (image_size * 2, image_size), (128, 128, 128))
+    view = _crop(frame, crop_box, "person-screen")
+    scale = min(image_size / view.width, image_size / view.height)
+    resized_size = (
+        max(1, int(round(view.width * scale))),
+        max(1, int(round(view.height * scale))),
+    )
+    view = view.resize(resized_size, Image.Resampling.LANCZOS)
+    evidence = Image.new("RGB", (image_size, image_size), (128, 128, 128))
+    origin = (
+        (image_size - view.width) // 2,
+        (image_size - view.height) // 2,
+    )
+    evidence.paste(view, origin)
+    crop_left, crop_top, _crop_right, _crop_bottom = crop_box
 
-    scene_scale = min(image_size / frame.width, image_size / frame.height)
-    scene_size = (
-        max(1, int(round(frame.width * scene_scale))),
-        max(1, int(round(frame.height * scene_scale))),
-    )
-    scene = frame.resize(scene_size, Image.Resampling.LANCZOS)
-    scene_origin = (
-        (image_size - scene.width) // 2,
-        (image_size - scene.height) // 2,
-    )
-    panel.paste(scene, scene_origin)
-    draw = ImageDraw.Draw(panel)
-    for polygons, color in (
-        (screen_polygons, (255, 0, 0)),
-        (occluder_polygons, (0, 255, 0)),
-    ):
-        for polygon in polygons:
-            points = [
-                (
-                    int(round(x * scene_scale)) + scene_origin[0],
-                    int(round(y * scene_scale)) + scene_origin[1],
-                )
-                for x, y in polygon
-            ]
-            if len(points) >= 3:
-                draw.line(points + [points[0]], fill=color, width=3)
-
-    person = _crop(frame, person_box, "person")
-    person_scale = min(1.0, image_size / person.width, image_size / person.height)
-    person_size = (
-        max(1, int(round(person.width * person_scale))),
-        max(1, int(round(person.height * person_scale))),
-    )
-    if person_size != person.size:
-        person = person.resize(person_size, Image.Resampling.LANCZOS)
-    person_origin = (
-        image_size + (image_size - person.width) // 2,
-        (image_size - person.height) // 2,
-    )
-    panel.paste(person, person_origin)
-
-    if phone_box is not None:
-        focus = _phone_focus_box(phone_box, frame.width, frame.height)
-        phone = _crop(frame, focus, "phone")
-        tile_size = max(64, min(144, image_size // 3))
-        phone.thumbnail((tile_size - 8, tile_size - 8), Image.Resampling.LANCZOS)
-        tile = Image.new("RGB", (tile_size, tile_size), (96, 96, 96))
-        tile.paste(
-            phone,
-            ((tile_size - phone.width) // 2, (tile_size - phone.height) // 2),
+    def transported(point: tuple[float, float]) -> tuple[int, int]:
+        return (
+            int(round((point[0] - crop_left) * scale)) + origin[0],
+            int(round((point[1] - crop_top) * scale)) + origin[1],
         )
-        ImageDraw.Draw(tile).rectangle(
-            (0, 0, tile_size - 1, tile_size - 1), fill=None, outline=(255, 255, 0), width=3
+
+    draw = ImageDraw.Draw(evidence)
+    screen_points = [transported(point) for point in screen_polygon]
+    if len(screen_points) >= 3:
+        draw.line(
+            screen_points + [screen_points[0]], fill=(255, 0, 0), width=3
         )
-        panel.paste(tile, (image_size * 2 - tile_size - 8, image_size - tile_size - 8))
-    return panel
+    person_left, person_top, person_right, person_bottom = person_box
+    draw.rectangle(
+        (*transported((person_left, person_top)), *transported((person_right, person_bottom))),
+        outline=(255, 165, 0),
+        width=3,
+    )
+    return evidence
 
 
 def decode_capture_frames(
@@ -131,11 +107,43 @@ def decode_capture_frames(
         selected_by_track = _select_entries(timeline, fps=fps, frame_count=frame_count)
         if not selected_by_track:
             return ()
-        screen_polygons, occluder_polygons = _visibility_polygons(
+        screen_polygons = _visibility_screens(
             visibility, video_width=width, video_height=height
         )
+        crop_specs: dict[
+            str,
+            tuple[tuple[int, int, int, int], tuple[tuple[float, float], ...]],
+        ] = {}
+        for track_id, entries in selected_by_track:
+            person_boxes = [
+                box
+                for _frame_index, _time_sec, entry in entries
+                if (
+                    box := _scaled_box(
+                        entry.get("roi", entry.get("bbox")),
+                        entry,
+                        video_width=width,
+                        video_height=height,
+                    )
+                )
+                is not None
+            ]
+            screen_polygon = _associated_screen(entries, screen_polygons, person_boxes)
+            if not person_boxes or screen_polygon is None:
+                continue
+            crop_specs[track_id] = (
+                _joint_crop_box(
+                    person_boxes,
+                    screen_polygon,
+                    frame_width=width,
+                    frame_height=height,
+                ),
+                screen_polygon,
+            )
         targets: dict[int, list[tuple[str, int, float, Mapping[str, Any]]]] = {}
         for track_id, entries in selected_by_track:
+            if track_id not in crop_specs:
+                continue
             for order, (frame_index, time_sec, entry) in enumerate(entries):
                 targets.setdefault(frame_index, []).append(
                     (track_id, order, time_sec, entry)
@@ -163,20 +171,15 @@ def decode_capture_frames(
                 )
                 if person_box is None:
                     continue
-                phone_box = _largest_phone_box(
-                    entry,
-                    video_width=width,
-                    video_height=height,
-                )
-                panel = build_capture_panel(
+                crop_box, screen_polygon = crop_specs[track_id]
+                evidence = build_capture_frame(
                     frame,
+                    crop_box=crop_box,
                     person_box=person_box,
-                    phone_box=phone_box,
-                    screen_polygons=screen_polygons,
-                    occluder_polygons=occluder_polygons,
+                    screen_polygon=screen_polygon,
                 )
                 transported = io.BytesIO()
-                panel.save(transported, format="JPEG", quality=92)
+                evidence.save(transported, format="JPEG", quality=92)
                 transported.seek(0)
                 with Image.open(transported) as reopened:
                     final_panel = reopened.convert("RGB").copy()
@@ -206,23 +209,6 @@ def _crop(image: Any, box: tuple[int, int, int, int], label: str) -> Any:
     if right <= left or bottom <= top:
         raise ValueError(f"invalid {label} crop")
     return image.crop((left, top, right, bottom))
-
-
-def _phone_focus_box(
-    phone_box: tuple[int, int, int, int], frame_width: int, frame_height: int
-) -> tuple[int, int, int, int]:
-    left, top, right, bottom = phone_box
-    width = right - left
-    height = bottom - top
-    if width <= 0 or height <= 0:
-        raise ValueError("invalid phone crop")
-    side = max(48, int(round(max(width, height) * 2.75)))
-    side = min(side, frame_width, frame_height)
-    center_x = (left + right) / 2
-    center_y = (top + bottom) / 2
-    focus_left = min(max(0, int(round(center_x - side / 2))), frame_width - side)
-    focus_top = min(max(0, int(round(center_y - side / 2))), frame_height - side)
-    return focus_left, focus_top, focus_left + side, focus_top + side
 
 
 def _number(value: object) -> float | None:
@@ -273,8 +259,11 @@ def _select_entries(
             continue
         center_time = alarms[0][1]
         window = [item for item in ordered if abs(item[1] - center_time) <= 2.5]
-        if len(window) > 16:
-            positions = [round(index * (len(window) - 1) / 15) for index in range(16)]
+        if len(window) > CAPTURE_FRAME_COUNT:
+            positions = [
+                round(index * (len(window) - 1) / (CAPTURE_FRAME_COUNT - 1))
+                for index in range(CAPTURE_FRAME_COUNT)
+            ]
             window = [window[position] for position in positions]
         selected.append((track_id, tuple(window)))
     return tuple(selected)
@@ -306,33 +295,11 @@ def _scaled_box(
     return box if box[2] > box[0] and box[3] > box[1] else None
 
 
-def _largest_phone_box(
-    entry: Mapping[str, Any], *, video_width: int, video_height: int
-) -> tuple[int, int, int, int] | None:
-    raw_boxes = entry.get("phone_boxes")
-    if not isinstance(raw_boxes, list):
-        return None
-    boxes = []
-    for raw in raw_boxes:
-        if not isinstance(raw, Mapping) or raw.get("accepted") is not True:
-            continue
-        box = _scaled_box(
-            raw.get("box"), entry, video_width=video_width, video_height=video_height
-        )
-        if box is not None:
-            boxes.append(box)
-    return max(
-        boxes,
-        key=lambda box: (box[2] - box[0]) * (box[3] - box[1]),
-        default=None,
-    )
-
-
-def _visibility_polygons(
+def _visibility_screens(
     visibility: Any, *, video_width: int, video_height: int
-) -> tuple[tuple[tuple[tuple[float, float], ...], ...], tuple[tuple[tuple[float, float], ...], ...]]:
+) -> dict[str, tuple[tuple[float, float], ...]]:
     if not isinstance(visibility, Mapping):
-        return (), ()
+        return {}
     source_width = _number(visibility.get("frame_width")) or float(video_width)
     source_height = _number(visibility.get("frame_height")) or float(video_height)
 
@@ -349,20 +316,66 @@ def _visibility_polygons(
             points.append((x * video_width / source_width, y * video_height / source_height))
         return tuple(points) if len(points) >= 3 else None
 
-    screens = []
+    screens: dict[str, tuple[tuple[float, float], ...]] = {}
     raw_screens = visibility.get("screens")
     if isinstance(raw_screens, list):
         for screen in raw_screens:
             if isinstance(screen, Mapping):
                 polygon = scaled(screen.get("screen_polygon", screen.get("screen_poly")))
-                if polygon is not None:
-                    screens.append(polygon)
-    occluders = []
-    raw_occluders = visibility.get("occluders")
-    if isinstance(raw_occluders, list):
-        for occluder in raw_occluders:
-            if isinstance(occluder, Mapping):
-                polygon = scaled(occluder.get("polygon"))
-                if polygon is not None:
-                    occluders.append(polygon)
-    return tuple(screens), tuple(occluders)
+                screen_id = screen.get("screen_id")
+                if polygon is not None and isinstance(screen_id, str) and screen_id:
+                    screens[screen_id] = polygon
+    return screens
+
+
+def _associated_screen(
+    entries: Sequence[tuple[int, float, Mapping[str, Any]]],
+    screens: Mapping[str, tuple[tuple[float, float], ...]],
+    person_boxes: Sequence[tuple[int, int, int, int]],
+) -> tuple[tuple[float, float], ...] | None:
+    for _frame_index, _time_sec, entry in sorted(
+        entries, key=lambda item: item[2].get("alarm") is not True
+    ):
+        screen_id = entry.get("screen_id")
+        if isinstance(screen_id, str) and screen_id in screens:
+            return screens[screen_id]
+    if not screens or not person_boxes:
+        return None
+    left, top, right, bottom = person_boxes[len(person_boxes) // 2]
+    person_center = ((left + right) / 2, (top + bottom) / 2)
+
+    def distance(polygon: Sequence[tuple[float, float]]) -> float:
+        center_x = sum(point[0] for point in polygon) / len(polygon)
+        center_y = sum(point[1] for point in polygon) / len(polygon)
+        return (center_x - person_center[0]) ** 2 + (center_y - person_center[1]) ** 2
+
+    return min(screens.values(), key=distance)
+
+
+def _joint_crop_box(
+    person_boxes: Sequence[tuple[int, int, int, int]],
+    screen_polygon: Sequence[tuple[float, float]],
+    *,
+    frame_width: int,
+    frame_height: int,
+    margin_ratio: float = 0.15,
+) -> tuple[int, int, int, int]:
+    xs = [float(box[0]) for box in person_boxes] + [
+        float(box[2]) for box in person_boxes
+    ] + [point[0] for point in screen_polygon]
+    ys = [float(box[1]) for box in person_boxes] + [
+        float(box[3]) for box in person_boxes
+    ] + [point[1] for point in screen_polygon]
+    if not xs or not ys:
+        raise ValueError("missing person-screen geometry")
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    margin_x = max(24.0, width * margin_ratio)
+    margin_y = max(24.0, height * margin_ratio)
+    left = max(0, int(math.floor(min(xs) - margin_x)))
+    top = max(0, int(math.floor(min(ys) - margin_y)))
+    right = min(frame_width, int(math.ceil(max(xs) + margin_x)))
+    bottom = min(frame_height, int(math.ceil(max(ys) + margin_y)))
+    if right <= left or bottom <= top:
+        raise ValueError("invalid person-screen crop")
+    return left, top, right, bottom

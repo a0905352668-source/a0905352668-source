@@ -37,6 +37,7 @@ from typing import Any, Mapping, Sequence
 
 from live_operator.capture_evidence import (
     CAPTURE_EVIDENCE_REVISION,
+    CAPTURE_FRAME_COUNT,
     decode_capture_frames,
 )
 from live_operator.inference_priority import ProductionFirstGate
@@ -125,18 +126,22 @@ PROMPT = (
 )
 PROMPT_REVISION = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
 
-CAPTURE_PROMPT = """You review chronological workplace camera evidence after a phone has already
-passed a genuine-phone/use check. Decide only whether the phone camera could be
-capturing a protected computer screen. Use the full scene for screen and partition
-geometry, the native-detail person view for posture, and the phone/hand detail only
-as supplemental evidence. Do not infer camera direction from an ambiguous tiny image.
+CAPTURE_PROMPT = """You review a chronological short video after stage one has already confirmed
+that the target person is actively using a genuine phone. Do not re-evaluate whether
+the object is a phone. Every frame is one stable joint crop containing the same target
+person and the associated nearest protected screen, so their relative position and
+motion are preserved. Decide only whether a camera on the phone could plausibly see
+any part of that screen at any moment. When the phone front/back or lens direction
+cannot be resolved, choose UNCERTAIN instead of guessing that capture is impossible.
 
 Choose exactly one decision:
 - CAPTURE_POSSIBLE: a phone is raised or aimed so its camera may see a protected screen.
 - IMPOSSIBLE_FLAT_OR_DOWN: the phone is clearly flat or directed downward.
 - IMPOSSIBLE_AWAY_FROM_SCREEN: the camera is clearly directed away from every screen.
 - IMPOSSIBLE_BLOCKED: an opaque obstacle clearly blocks the phone-to-screen view.
-- NOT_PHONE_OR_NO_CAPTURE_ACTION: no phone capture action is visible.
+- NOT_PHONE_OR_NO_CAPTURE_ACTION: the confirmed phone is used normally and never
+  raised, aimed, or moved as if to capture the screen. Do not use this label to dispute
+  the stage-one phone decision.
 - UNCERTAIN: orientation, geometry, obstruction, or temporal evidence is insufficient.
 
 Return exactly one ASCII line and nothing else: LABEL=<decision>."""
@@ -1085,7 +1090,9 @@ class MageVLReviewer:
             )
 
         labels: list[str] = []
-        incomplete = not sequences or any(len(sequence.frames) != 16 for sequence in sequences)
+        incomplete = not sequences or any(
+            len(sequence.frames) != CAPTURE_FRAME_COUNT for sequence in sequences
+        )
 
         class CancelWhenProductionArrives(StoppingCriteria):
             def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> Any:
@@ -1103,7 +1110,7 @@ class MageVLReviewer:
                             complete=False,
                             cancelled=True,
                         )
-                    if len(sequence.frames) != 16:
+                    if len(sequence.frames) != CAPTURE_FRAME_COUNT:
                         continue
                     inputs = self.processor(
                         text=[self.capture_chat_text],

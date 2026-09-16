@@ -438,3 +438,12 @@ def test_reviewer_initializes_production_and_capture_prompts_but_one_model(
         EARLY_RESCUE_PROMPT,
         CAPTURE_PROMPT,
     ]
+
+
+def test_capture_prompt_uses_confirmed_phone_joint_crop_video() -> None:
+    normalized = " ".join(CAPTURE_PROMPT.split())
+    assert "already confirmed" in normalized
+    assert "Do not re-evaluate whether the object is a phone" in normalized
+    assert "chronological short video" in normalized
+    assert "same target person and the associated nearest protected screen" in normalized
+    assert "phone/hand detail" not in normalized

@@ -8,7 +8,8 @@ from PIL import Image
 
 from live_operator.capture_evidence import (
     CAPTURE_EVIDENCE_REVISION,
-    build_capture_panel,
+    CAPTURE_FRAME_COUNT,
+    build_capture_frame,
     decode_capture_frames,
 )
 
@@ -41,6 +42,7 @@ def _overlay(*, frame_count: int = 60, alarm_index: int = 30) -> dict:
                 "frame_width": 320,
                 "frame_height": 240,
                 "bbox": [110, 60, 210, 200],
+                "screen_id": "screen-1",
                 "alarm": index == alarm_index,
                 "phone_boxes": [
                     {
@@ -74,53 +76,54 @@ def _visibility() -> dict:
     }
 
 
-def test_panel_keeps_scene_native_person_and_phone_detail() -> None:
+def test_frame_is_a_joint_person_screen_crop_without_full_scene_or_phone_inset() -> None:
     frame = Image.new("RGB", (320, 240), (10, 20, 30))
     for x in range(110, 210):
         for y in range(60, 200):
             frame.putpixel((x, y), (30, 60, 90))
-    frame.putpixel((180, 120), (255, 0, 255))
+    for x in range(176, 185):
+        for y in range(116, 125):
+            frame.putpixel((x, y), (255, 0, 255))
+    for x in range(290, 310):
+        for y in range(210, 230):
+            frame.putpixel((x, y), (0, 255, 0))
 
-    panel = build_capture_panel(
+    evidence = build_capture_frame(
         frame,
+        crop_box=(0, 0, 245, 225),
         person_box=(110, 60, 210, 200),
-        phone_box=(175, 115, 190, 130),
-        screen_polygons=[[(10, 10), (90, 10), (90, 55), (10, 55)]],
-        occluder_polygons=[[(220, 0), (240, 0), (240, 220), (220, 220)]],
+        screen_polygon=[(10, 10), (90, 10), (90, 55), (10, 55)],
     )
 
-    assert panel.size == (896, 448)
-    assert panel.getpixel((14, 70)) == (255, 0, 0)
-    assert panel.getpixel((308, 56)) == (0, 255, 0)
+    assert evidence.size == (448, 448)
     assert any(
-        panel.getpixel((x, y)) == (255, 0, 255)
-        for x in range(448, 896)
+        evidence.getpixel((x, y)) == (255, 0, 255)
+        for x in range(448)
         for y in range(448)
     )
-    # The native 100x140 person pixels remain present without mandatory upscaling.
-    native_person_pixels = sum(
-        panel.getpixel((x, y)) == (30, 60, 90)
-        for x in range(448, 896)
+    assert not any(
+        evidence.getpixel((x, y)) == (0, 255, 0)
+        for x in range(448)
         for y in range(448)
     )
-    assert native_person_pixels >= 100 * 140 - 1
 
 
-def test_decode_selects_16_distinct_chronological_frames_within_five_seconds(
+def test_decode_selects_30_distinct_chronological_joint_crop_frames(
     tmp_path: Path,
 ) -> None:
     video = _synthetic_video(tmp_path / "event.avi")
 
     sequences = decode_capture_frames(video, _overlay(), _visibility())
 
-    assert CAPTURE_EVIDENCE_REVISION == "scene-person-phone-span5s-16f-jpeg92-v1"
+    assert CAPTURE_EVIDENCE_REVISION == "person-nearest-screen-span5s-30f-jpeg92-v2"
+    assert CAPTURE_FRAME_COUNT == 30
     assert len(sequences) == 1
     sequence = sequences[0]
     assert sequence.track_id == "person-1"
-    assert len(sequence.frames) == 16
+    assert len(sequence.frames) == 30
     assert sequence.source_frame_indices == tuple(sorted(set(sequence.source_frame_indices)))
     assert sequence.times[-1] - sequence.times[0] <= 5.0
-    assert all(frame.size == (896, 448) for frame in sequence.frames)
+    assert all(frame.size == (448, 448) for frame in sequence.frames)
 
 
 def test_short_sequence_is_not_padded_with_repeated_frames(tmp_path: Path) -> None:
