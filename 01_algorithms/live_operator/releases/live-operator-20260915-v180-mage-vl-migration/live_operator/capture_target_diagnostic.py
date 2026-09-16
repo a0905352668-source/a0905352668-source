@@ -34,6 +34,11 @@ TARGET_DIAGNOSTIC_PROMPTS = {
     'target_pro_' + key: TARGET_TEMPLATE.format(target=value)
     for key, value in TARGET_DESCRIPTIONS.items()
 }
+TARGET_DIAGNOSTIC_PROMPTS.update({
+    'target_box_' + key: TARGET_TEMPLATE.format(target=value) +
+    '\n若视频中存在标注：绿色TARGET框为事件目标，黄色PHONE框为其手机，蓝色带编号轮廓为相关屏幕。标注只用于定位，不代表镜头指向、无遮挡或可以拍摄；无框时仍按目标位置和外观定位。\n'
+    for key,value in TARGET_DESCRIPTIONS.items() if key != 'none'
+})
 TARGET_MAX_NEW_TOKENS = 192
 
 

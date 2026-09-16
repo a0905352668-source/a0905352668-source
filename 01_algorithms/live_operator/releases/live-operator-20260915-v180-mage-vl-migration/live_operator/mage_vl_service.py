@@ -43,6 +43,7 @@ from live_operator.capture_evidence import (
     process_capture_video,
 )
 from live_operator.inference_priority import ProductionFirstGate
+from live_operator.capture_markings import CAPTURE_MARKINGS_PROFILES, capture_markings_profile
 from live_operator.capture_target_diagnostic import (
     TARGET_DIAGNOSTIC_PROMPTS, TARGET_MAX_NEW_TOKENS,
     parse_target_diagnostic, diagnostic_stop_reason, target_business_label,
@@ -190,7 +191,7 @@ Task: first describe only what is visible, then decide possible phone-to-screen 
 CAPTURE_PROMPTS = {'exclusion': CAPTURE_PROMPT, 'direction': CAPTURE_DIRECTION_PROMPT, 'observed': CAPTURE_OBSERVATION_PROMPT}
 CAPTURE_PROMPTS.update(TARGET_DIAGNOSTIC_PROMPTS)
 CAPTURE_PROMPT_REVISION = hashlib.sha256(
-    json.dumps({'prompts':CAPTURE_PROMPTS,'input_profiles':CAPTURE_INPUT_PROFILES}, sort_keys=True).encode('utf-8')
+    json.dumps({'prompts':CAPTURE_PROMPTS,'input_profiles':CAPTURE_INPUT_PROFILES,'markings_profiles':CAPTURE_MARKINGS_PROFILES}, sort_keys=True).encode('utf-8')
 ).hexdigest()
 
 
@@ -1174,6 +1175,9 @@ class MageVLReviewer:
                 raise ValueError("capture metadata must be objects")
             variant = capture_prompt_variant(visibility)
             profile = capture_input_profile(visibility)
+            markings = capture_markings_profile(visibility)
+            if markings != 'clean' and (not variant.startswith('target_box_') or profile != 'video5s30'):
+                raise ValueError('markings require the fixed short-video box diagnostic')
             if variant in TARGET_DIAGNOSTIC_PROMPTS and profile != 'video5s30':
                 raise ValueError('target experiment requires the fixed short video profile')
             target_frames, window_seconds = CAPTURE_INPUT_PROFILES[profile]
@@ -1217,6 +1221,7 @@ class MageVLReviewer:
                             inputs = process_capture_video(self.processor,self.capture_chat_texts[variant],sequence)
                     evidence_records.append({'track_id':sequence.track_id,'frame_count':len(sequence.frames),'source_times':list(sequence.times),'span_seconds':sequence.times[-1]-sequence.times[0],'screen_ids':list(sequence.screen_ids),'crop_box':sequence.crop_box,'input_kind':'decoded_video_frames' if profile=='legacy' else 'lossless_video_file','model_timestamp_span_seconds':float(len(sequence.frames)-1) if profile=='legacy' else sequence.times[-1]-sequence.times[0]})
                     if is_target_diagnostic:
+                        evidence_records[-1]['markings_profile'] = markings
                         evidence_records[-1]['model_video_sha256'] = video_audit['video_sha256']
                         evidence_records[-1]['frame_rgb_sha256'] = [hashlib.sha256(frame.tobytes()).hexdigest() for frame in sequence.frames]
                         evidence_records[-1]['source_frame_indices'] = list(sequence.source_frame_indices)

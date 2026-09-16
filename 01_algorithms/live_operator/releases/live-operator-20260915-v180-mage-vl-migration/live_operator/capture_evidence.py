@@ -10,6 +10,7 @@ import statistics
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from live_operator.capture_markings import capture_markings_profile, draw_capture_markings
 
 
 CAPTURE_FRAME_COUNT = 30
@@ -68,6 +69,7 @@ def decode_capture_frames(
 
     if type(target_frames) is not int or target_frames not in {30,60} or window_seconds not in {5.0,10.0}:
         raise ValueError('unsupported offline evidence window')
+    markings = capture_markings_profile(visibility)
 
     overlay_root = overlay.get("overlay", overlay) if isinstance(overlay, Mapping) else {}
     timeline = overlay_root.get("bbox_timeline") if isinstance(overlay_root, Mapping) else None
@@ -175,6 +177,16 @@ def decode_capture_frames(
                 transported.seek(0)
                 with Image.open(transported) as reopened:
                     final_panel = reopened.convert("RGB").copy()
+                if markings != 'clean':
+                    accepted_phones = []
+                    raw_phones = entry.get('phone_boxes')
+                    for phone in raw_phones if isinstance(raw_phones,list) else []:
+                        if isinstance(phone, Mapping) and phone.get('accepted') is True:
+                            box = _scaled_box(phone.get('box'),entry,video_width=width,video_height=height)
+                            if box is not None:
+                                accepted_phones.append(box)
+                    target_box = _scaled_box(entry.get('bbox'),entry,video_width=width,video_height=height) or person_box
+                    final_panel = draw_capture_markings(final_panel,crop_box=crop_specs[track_id],person_box=target_box,phone_boxes=accepted_phones,screen_polygons={sid:screen_polygons[sid] for sid in screen_specs[track_id]})
                 panels[track_id][order] = (final_panel, frame_index, time_sec)
 
         sequences = []
