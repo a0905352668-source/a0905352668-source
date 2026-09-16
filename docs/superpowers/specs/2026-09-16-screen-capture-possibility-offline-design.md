@@ -20,14 +20,15 @@ The intended policy is:
 - fail open to a suspected event when geometry and visual evidence conflict.
 
 This design covers an offline experiment only. It must not change the live
-selector, live calibration, event visibility, services, cameras, recording,
-DeepStream, or the Mage-VL service on `192.168.104.54`.
+selector, live calibration, event visibility, cameras, recording, DeepStream,
+or public web service.
 
-The offline experiment must not consume production inference capacity in a
-way that delays foreground detection or review. Before any model-backed run,
-the runner must prove that it is using an isolated compute target that is not
-the live `.54` endpoint. If isolated compute is unavailable, it must stop with
-an explicit resource-isolation error instead of borrowing production capacity.
+The user approved interleaving experimental second-stage reviews on the live
+`.54` Mage-VL host only when production review remains strictly higher
+priority. The experiment reuses the one loaded model with a second prompt and
+must not start a second full model process. It may claim work only when the
+production queue is empty, must stop claiming work as soon as production
+arrives, and must auto-pause on latency, queue, memory, or GPU pressure.
 
 ## Current-system findings
 
@@ -46,6 +47,13 @@ person. It does not receive enough full-scene context to see the protected
 screen or intervening partitions. Its prompt asks whether non-call phone use is
 visible, so looking at or tapping a real phone is currently a valid keep result
 even when the phone cannot photograph a screen.
+
+A guarded two-process load experiment on 2026-09-16 showed that a second full
+model is not safe on `.54`: before becoming ready it reached about 7.7 GB RSS,
+reduced host available memory from about 9.9 GB to 3.6 GB, and caused swap use
+to grow. The test instance was stopped and removed; the production process,
+listener, eight cameras, and roughly 80 FPS foreground pipeline remained
+healthy. Therefore the approved design shares one model instance.
 
 ## Considered approaches
 
@@ -73,22 +81,30 @@ action). This is the selected approach.
 
 ## Proposed architecture
 
-The offline evaluator has five stages:
+The offline evaluator has six stages:
 
 1. Load an immutable historical event clip and its existing detector timeline.
-2. Resolve the target person, phone, protected screen, and camera-specific
+2. Reuse the persisted first-stage result that checks whether the candidate is
+   genuine non-call phone use; do not rerun first-stage historical reviews.
+3. Resolve the target person, phone, protected screen, and camera-specific
    visibility relationship.
-3. Apply only manually verified spatial impossibility rules, recording rather
+4. Apply only manually verified spatial impossibility rules, recording rather
    than hiding every intermediate decision.
-4. Build chronological evidence panels containing the full scene, the target
+5. Build chronological evidence panels containing the full scene, the target
    person at native detail, and a phone/hand detail view, then run an offline
-   Mage-VL prompt concerned only with screen-capture possibility.
-5. Combine geometry and temporal review into a final offline label and a
+   second-stage Mage-VL prompt concerned only with screen-capture possibility.
+6. Combine geometry and temporal review into a final offline label and a
    machine-readable reason trace.
 
 The evaluator is a separate offline entry point. It reads copied or read-only
 historical inputs and writes to a new experiment directory. It does not import
 or overwrite live event review state.
+
+The `.54` service exposes logically separate production and offline queues
+around the same serialized model. Production work is always selected first.
+Offline work is single-concurrency, rate-limited, and guarded by a quiet-period
+check. The service exposes queue depth, active work class, and latency metrics
+so the runner can pause instead of guessing whether capacity is free.
 
 ## Fixed-scene visibility model
 
@@ -219,6 +235,9 @@ The experiment may proceed to a separate shadow-mode proposal only if:
 8. The complete focused offline test matrix finishes and produces a comparison
    report; partial execution or a sample smoke run is not represented as test
    completion.
+9. Production queue depth, error rate, and latency remain within their recorded
+   pre-experiment envelope; any breach automatically pauses offline dispatch
+   and fails the coexistence test.
 
 Passing these criteria does not itself authorize deployment. Shadow mode and
 production filtering require separate review and approval.
@@ -245,5 +264,7 @@ During this design's offline phase:
   record is changed;
 - no live calibration or prompt revision is published;
 - experiment output is kept outside the live run and dashboard directories.
-- the live `.54` review endpoint is not used for experimental inference; an
-  isolated model target is a mandatory precondition for model-backed tests.
+- the `.54` host keeps exactly one loaded Mage-VL model process; production and
+  experimental prompts share that process through separate priority queues.
+- offline dispatch remains disabled while historical production reconciliation
+  is active or the production queue is non-empty.
