@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import hashlib
 import math
 import statistics
 import tempfile
@@ -263,7 +264,7 @@ def _select_entries(
     return tuple(selected)
 
 
-def process_capture_video(processor: Any, chat_text: str, sequence: CaptureSequence) -> Any:
+def process_capture_video(processor: Any, chat_text: str, sequence: CaptureSequence, *, audit: dict[str, Any] | None = None) -> Any:
     """Process a lossless video file with actual sampled-frame timestamps.
 
     Caller holds the reviewer's model lock. The processor is always restored
@@ -304,6 +305,8 @@ def process_capture_video(processor: Any, chat_text: str, sequence: CaptureSeque
                 writer.write(cv2.cvtColor(np.asarray(frame.convert('RGB')),cv2.COLOR_RGB2BGR))
         finally:
             writer.release()
+        if audit is not None:
+            audit['video_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
         processor.video_processor = TimedVideoProcessor()
         try:
             return processor(text=[chat_text],videos=[str(path)],num_frames=count,return_tensors='pt',padding=True)

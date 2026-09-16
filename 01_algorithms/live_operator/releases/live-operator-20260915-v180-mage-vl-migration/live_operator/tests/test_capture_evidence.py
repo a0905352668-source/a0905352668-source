@@ -260,3 +260,18 @@ def test_video_input_rejects_non_increasing_timestamps():
     sequence = module.CaptureSequence('p',(Image.new('RGB',(448,448)),)*2,(0,1),(1.0,1.0))
     with pytest.raises(ValueError,match='strictly increasing'):
         module.process_capture_video(object(),'prompt',sequence)
+
+
+def test_video_audit_hash_identifies_actual_processor_file():
+    import hashlib
+    from live_operator import capture_evidence as module
+    sequence = module.CaptureSequence('p',(Image.new('RGB',(448,448)),)*2,(0,1),(0.0,0.2))
+    seen = []
+    class Processor:
+        video_processor = object()
+        def __call__(self, **kwargs):
+            seen.append(hashlib.sha256(Path(kwargs['videos'][0]).read_bytes()).hexdigest())
+            return {'ok': True}
+    audit = {}
+    assert module.process_capture_video(Processor(),'prompt',sequence,audit=audit) == {'ok': True}
+    assert audit['video_sha256'] == seen[0]

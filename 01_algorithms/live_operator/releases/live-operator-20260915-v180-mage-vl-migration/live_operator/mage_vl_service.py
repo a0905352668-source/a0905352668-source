@@ -43,6 +43,10 @@ from live_operator.capture_evidence import (
     process_capture_video,
 )
 from live_operator.inference_priority import ProductionFirstGate
+from live_operator.capture_target_diagnostic import (
+    TARGET_DIAGNOSTIC_PROMPTS, TARGET_MAX_NEW_TOKENS,
+    parse_target_diagnostic, diagnostic_stop_reason, target_business_label,
+)
 from live_operator.vlm_review import (
     VLM_EVIDENCE_REVISION,
     VLMReviewResult,
@@ -184,6 +188,7 @@ Task: first describe only what is visible, then decide possible phone-to-screen 
     'Keep observations concise; use UNCERTAIN for unresolved evidence.'
 )
 CAPTURE_PROMPTS = {'exclusion': CAPTURE_PROMPT, 'direction': CAPTURE_DIRECTION_PROMPT, 'observed': CAPTURE_OBSERVATION_PROMPT}
+CAPTURE_PROMPTS.update(TARGET_DIAGNOSTIC_PROMPTS)
 CAPTURE_PROMPT_REVISION = hashlib.sha256(
     json.dumps({'prompts':CAPTURE_PROMPTS,'input_profiles':CAPTURE_INPUT_PROFILES}, sort_keys=True).encode('utf-8')
 ).hexdigest()
@@ -1131,6 +1136,7 @@ class MageVLReviewer:
         raw_outputs: list[str] = []
         parsed_outputs: list[bool] = []
         evidence_records: list[dict[str,Any]] = []
+        diagnostics: list[dict[str,Any]] = []
 
         def result(
             label: str,
@@ -1154,6 +1160,7 @@ class MageVLReviewer:
                 "candidate_evidence": list(evidence_records),
                 "candidate_outputs": list(raw_outputs),
                 "candidate_output_parsed": list(parsed_outputs),
+                "candidate_diagnostics": list(diagnostics),
             }
 
         if cancel_event.is_set():
@@ -1167,6 +1174,8 @@ class MageVLReviewer:
                 raise ValueError("capture metadata must be objects")
             variant = capture_prompt_variant(visibility)
             profile = capture_input_profile(visibility)
+            if variant in TARGET_DIAGNOSTIC_PROMPTS and profile != 'video5s30':
+                raise ValueError('target experiment requires the fixed short video profile')
             target_frames, window_seconds = CAPTURE_INPUT_PROFILES[profile]
             sequences = decode_capture_frames(video_path, overlay, visibility, target_frames=target_frames, window_seconds=window_seconds)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
@@ -1197,11 +1206,22 @@ class MageVLReviewer:
                         )
                     if len(sequence.frames) != target_frames:
                         continue
+                    is_target_diagnostic = variant in TARGET_DIAGNOSTIC_PROMPTS
+                    video_audit: dict[str,Any] = {}
                     if profile == 'legacy':
                         inputs = self.processor(text=[self.capture_chat_texts[variant]],videos=[list(sequence.frames)],return_tensors='pt',padding=True)
                     else:
-                        inputs = process_capture_video(self.processor,self.capture_chat_texts[variant],sequence)
+                        if is_target_diagnostic:
+                            inputs = process_capture_video(self.processor,self.capture_chat_texts[variant],sequence,audit=video_audit)
+                        else:
+                            inputs = process_capture_video(self.processor,self.capture_chat_texts[variant],sequence)
                     evidence_records.append({'track_id':sequence.track_id,'frame_count':len(sequence.frames),'source_times':list(sequence.times),'span_seconds':sequence.times[-1]-sequence.times[0],'screen_ids':list(sequence.screen_ids),'crop_box':sequence.crop_box,'input_kind':'decoded_video_frames' if profile=='legacy' else 'lossless_video_file','model_timestamp_span_seconds':float(len(sequence.frames)-1) if profile=='legacy' else sequence.times[-1]-sequence.times[0]})
+                    if is_target_diagnostic:
+                        evidence_records[-1]['model_video_sha256'] = video_audit['video_sha256']
+                        evidence_records[-1]['frame_rgb_sha256'] = [hashlib.sha256(frame.tobytes()).hexdigest() for frame in sequence.frames]
+                        evidence_records[-1]['source_frame_indices'] = list(sequence.source_frame_indices)
+                        evidence_records[-1]['model_input_tokens'] = int(inputs['input_ids'].shape[1])
+                        evidence_records[-1]['visual_grid_thw'] = inputs['image_grid_thw'].tolist()
                     inputs = {
                         key: (value.to(self.model.device) if hasattr(value, "to") else value)
                         for key, value in inputs.items()
@@ -1211,7 +1231,7 @@ class MageVLReviewer:
                     with torch.inference_mode():
                         output = self.model.generate(
                             **inputs,
-                            max_new_tokens=192 if variant=='observed' else 24,
+                            max_new_tokens=TARGET_MAX_NEW_TOKENS if is_target_diagnostic else (192 if variant=='observed' else 24),
                             do_sample=False,
                             stopping_criteria=StoppingCriteriaList(
                                 [CancelWhenProductionArrives()]
@@ -1232,7 +1252,20 @@ class MageVLReviewer:
                         output[0, inputs["input_ids"].shape[1] :],
                         skip_special_tokens=True,
                     ).strip()
-                    label, parsed = normalize_capture_observation(raw) if variant=='observed' else normalize_capture_output(raw)
+                    if is_target_diagnostic:
+                        generated_ids = output[0, inputs['input_ids'].shape[1]:].tolist()
+                        eos = getattr(self.model.generation_config, 'eos_token_id', None)
+                        if eos is None:
+                            eos = getattr(self.processor.tokenizer, 'eos_token_id', None)
+                        eos_ids = eos if isinstance(eos, (list, tuple)) else ([] if eos is None else [eos])
+                        reason = diagnostic_stop_reason(generated_ids, TARGET_MAX_NEW_TOKENS, eos_ids)
+                        diagnostic = parse_target_diagnostic(raw)
+                        diagnostic.update(generated_tokens=len(generated_ids), max_new_tokens=TARGET_MAX_NEW_TOKENS,
+                                          stop_reason=reason, truncated=reason=='max_new_tokens', eos_token_ids=list(eos_ids))
+                        diagnostics.append(diagnostic)
+                        label, parsed = target_business_label(diagnostic), diagnostic['parsed']
+                    else:
+                        label, parsed = normalize_capture_observation(raw) if variant=='observed' else normalize_capture_output(raw)
                     raw_outputs.append(raw[:2048])
                     parsed_outputs.append(parsed)
                     labels.append(label)
