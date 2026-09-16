@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 from PIL import Image
 
 from live_operator.capture_evidence import (
@@ -195,3 +196,67 @@ def test_unavailable_phone_boxes_fall_back_to_person_geometry(tmp_path: Path) ->
     sequence = decode_capture_frames(video, overlay, _visibility())[0]
     assert sequence.screen_ids == ('screen-1',)
     assert len(sequence.frames) == 30
+
+
+def test_long_window_has_60_unique_frames_without_padding(tmp_path: Path) -> None:
+    video = _synthetic_video(tmp_path / 'long.avi', frame_count=120)
+    sequence = decode_capture_frames(video, _overlay(frame_count=120, alarm_index=60), _visibility(), target_frames=60, window_seconds=10)[0]
+    assert len(sequence.frames) == 60
+    assert sequence.times[0] == 1.0
+    assert sequence.times[-1] == 11.0
+    assert len(set(sequence.source_frame_indices)) == 60
+
+
+def test_video_input_preserves_pixels_and_actual_irregular_times(tmp_path: Path) -> None:
+    from live_operator import capture_evidence as module
+    frames = tuple(Image.new('RGB', (448,448), (i*10,30,80)) for i in range(3))
+    sequence = module.CaptureSequence('p',frames,(10,13,19),(1.0,1.3,1.9))
+    class VideoProcessor:
+        fixed_num_frames = None
+        max_frames = 768
+        target_fps = None
+        def __call__(self, **kwargs):
+            capture = cv2.VideoCapture(kwargs['videos'][0])
+            decoded = []
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                decoded.append(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB))
+            capture.release()
+            assert len(decoded)==3
+            assert all(np.array_equal(a,np.asarray(b)) for a,b in zip(decoded,frames))
+            return {'frame_timestamps':[[0.0,1.0,2.0]],'video_grid_thw':np.array([[3,28,28]])}
+    class Processor:
+        video_processor = VideoProcessor()
+        def __call__(self, **kwargs):
+            assert isinstance(kwargs['videos'][0], str)
+            assert Path(kwargs['videos'][0]).is_file()
+            return self.video_processor(videos=kwargs['videos'])
+    processor = Processor()
+    original = processor.video_processor
+    result = module.process_capture_video(processor,'video prompt',sequence)
+    assert result['frame_timestamps'][0] == pytest.approx([0.0,0.3,0.9])
+    assert processor.video_processor is original
+    assert original.fixed_num_frames is None
+
+
+def test_video_processor_is_restored_after_failed_preprocessing():
+    from live_operator import capture_evidence as module
+    sequence = module.CaptureSequence('p',(Image.new('RGB',(448,448)),)*2,(0,1),(0.0,0.2))
+    original = object()
+    class Processor:
+        video_processor = original
+        def __call__(self, **kwargs):
+            raise RuntimeError('preprocessing failed')
+    processor = Processor()
+    with pytest.raises(RuntimeError,match='preprocessing failed'):
+        module.process_capture_video(processor,'prompt',sequence)
+    assert processor.video_processor is original
+
+
+def test_video_input_rejects_non_increasing_timestamps():
+    from live_operator import capture_evidence as module
+    sequence = module.CaptureSequence('p',(Image.new('RGB',(448,448)),)*2,(0,1),(1.0,1.0))
+    with pytest.raises(ValueError,match='strictly increasing'):
+        module.process_capture_video(object(),'prompt',sequence)

@@ -6,13 +6,15 @@ from dataclasses import dataclass
 import io
 import math
 import statistics
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
 CAPTURE_FRAME_COUNT = 30
 CAPTURE_CROP_MARGIN_RATIO = 0.25
-CAPTURE_EVIDENCE_REVISION = "person-nearby-screens-clean-span5s-30f-margin25-jpeg92-v4"
+CAPTURE_INPUT_PROFILES = {'legacy': (30, 5.0), 'video5s30': (30, 5.0), 'video10s60': (60, 10.0)}
+CAPTURE_EVIDENCE_REVISION = "person-nearby-screens-clean-video-timed-5s30-10s60-jpeg92-v5"
 
 
 @dataclass(frozen=True)
@@ -56,9 +58,15 @@ def decode_capture_frames(
     video_path: Path,
     overlay: Any,
     visibility: Any,
+    *,
+    target_frames: int = CAPTURE_FRAME_COUNT,
+    window_seconds: float = 5.0,
 ) -> tuple[CaptureSequence, ...]:
     import cv2
     from PIL import Image
+
+    if type(target_frames) is not int or target_frames not in {30,60} or window_seconds not in {5.0,10.0}:
+        raise ValueError('unsupported offline evidence window')
 
     overlay_root = overlay.get("overlay", overlay) if isinstance(overlay, Mapping) else {}
     timeline = overlay_root.get("bbox_timeline") if isinstance(overlay_root, Mapping) else None
@@ -86,7 +94,7 @@ def decode_capture_frames(
         ):
             raise ValueError("invalid capture-review clip metadata")
 
-        selected_by_track = _select_entries(timeline, fps=fps, frame_count=frame_count)
+        selected_by_track = _select_entries(timeline, fps=fps, frame_count=frame_count, target_frames=target_frames, window_seconds=window_seconds)
         if not selected_by_track:
             return ()
         screen_polygons = _visibility_screens(
@@ -207,7 +215,8 @@ def _number(value: object) -> float | None:
 
 
 def _select_entries(
-    timeline: list[Any], *, fps: float, frame_count: int
+    timeline: list[Any], *, fps: float, frame_count: int,
+    target_frames: int = CAPTURE_FRAME_COUNT, window_seconds: float = 5.0,
 ) -> tuple[tuple[str, tuple[tuple[int, float, Mapping[str, Any]], ...]], ...]:
     grouped: dict[str, dict[int, tuple[float, Mapping[str, Any]]]] = {}
     for raw_entry in timeline:
@@ -243,15 +252,63 @@ def _select_entries(
         if not alarms:
             continue
         center_time = alarms[0][1]
-        window = [item for item in ordered if abs(item[1] - center_time) <= 2.5]
-        if len(window) > CAPTURE_FRAME_COUNT:
+        window = [item for item in ordered if abs(item[1] - center_time) <= window_seconds/2]
+        if len(window) > target_frames:
             positions = [
-                round(index * (len(window) - 1) / (CAPTURE_FRAME_COUNT - 1))
-                for index in range(CAPTURE_FRAME_COUNT)
+                round(index * (len(window) - 1) / (target_frames - 1))
+                for index in range(target_frames)
             ]
             window = [window[position] for position in positions]
         selected.append((track_id, tuple(window)))
     return tuple(selected)
+
+
+def process_capture_video(processor: Any, chat_text: str, sequence: CaptureSequence) -> Any:
+    """Process a lossless video file with actual sampled-frame timestamps.
+
+    Caller holds the reviewer's model lock. The processor is always restored
+    before returning, so stage-one preprocessing is never changed.
+    """
+    import cv2
+    import numpy as np
+
+    count = len(sequence.frames)
+    if count < 2 or count != len(sequence.times):
+        raise ValueError('invalid timed sequence')
+    times = [float(t)-sequence.times[0] for t in sequence.times]
+    if any(not math.isfinite(t) for t in times) or any(b<=a for a,b in zip(times,times[1:])):
+        raise ValueError('frame times must be strictly increasing')
+    original = processor.video_processor
+    class TimedVideoProcessor:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(original,name)
+        def __setattr__(self, name: str, value: Any) -> None:
+            setattr(original,name,value)
+        def __call__(self, **kwargs: Any) -> Any:
+            output = original(**kwargs)
+            if int(output['video_grid_thw'][0,0]) != count:
+                raise ValueError('video processor changed frame count')
+            output['frame_timestamps'] = [list(times)]
+            return output
+
+    with tempfile.TemporaryDirectory(prefix='capture-video-') as temporary:
+        path = Path(temporary)/'person-screens.avi'
+        writer = cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'FFV1'),(count-1)/times[-1],(448,448))
+        if not writer.isOpened():
+            writer.release()
+            raise ValueError('lossless video encoder unavailable')
+        try:
+            for frame in sequence.frames:
+                if frame.size != (448,448):
+                    raise ValueError('unexpected video frame dimensions')
+                writer.write(cv2.cvtColor(np.asarray(frame.convert('RGB')),cv2.COLOR_RGB2BGR))
+        finally:
+            writer.release()
+        processor.video_processor = TimedVideoProcessor()
+        try:
+            return processor(text=[chat_text],videos=[str(path)],num_frames=count,return_tensors='pt',padding=True)
+        finally:
+            processor.video_processor = original
 
 
 def _scaled_box(

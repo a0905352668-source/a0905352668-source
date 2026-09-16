@@ -39,6 +39,23 @@ SECRET = b"s" * 32
 MODEL_VERSION = "fake-model-v1"
 
 
+def test_offline_video_profiles_are_bounded_and_legacy_default_unchanged():
+    assert service_module.capture_input_profile({}) == 'legacy'
+    assert service_module.capture_input_profile({'capture_input_profile':'video10s60'}) == 'video10s60'
+    with pytest.raises(ValueError):
+        service_module.capture_input_profile({'capture_input_profile':'video30s300'})
+    with pytest.raises(ValueError):
+        service_module.capture_input_profile({'capture_input_profile':[]})
+
+
+def test_observation_output_requires_final_safe_label():
+    raw='RELATION: monitor ahead of seated person.\nPHONE: low and unresolved.\nEVIDENCE: orientation unclear.\nLABEL=UNCERTAIN'
+    assert service_module.normalize_capture_observation(raw) == ('UNCERTAIN',True)
+    assert service_module.normalize_capture_observation(raw+'\nLABEL=CAPTURE_POSSIBLE') == ('UNCERTAIN',False)
+    assert service_module.normalize_capture_observation('unsupported explanation\nLABEL=IMPOSSIBLE_FLAT_OR_DOWN') == ('UNCERTAIN',False)
+    assert service_module.normalize_capture_observation('PHONE: facing away\nLABEL=IMPOSSIBLE_AWAY_FROM_SCREEN') == ('UNCERTAIN',False)
+
+
 class FakeReviewer:
     model_version = MODEL_VERSION
     model_fingerprint = hashlib.sha256(b"fake-model").hexdigest()
@@ -433,6 +450,7 @@ def test_reviewer_initializes_production_and_capture_prompts_but_one_model(
     assert reviewer.early_rescue_chat_text == "chat-3"
     assert reviewer.capture_chat_texts['exclusion'] == "chat-4"
     assert reviewer.capture_chat_texts['direction'] == "chat-5"
+    assert reviewer.capture_chat_texts['observed'] == "chat-6"
     prompt_texts = [call[0]["content"][1]["text"] for call in processor.calls]
     assert prompt_texts == [
         NATIVE_PROMPT,
@@ -440,6 +458,7 @@ def test_reviewer_initializes_production_and_capture_prompts_but_one_model(
         EARLY_RESCUE_PROMPT,
         CAPTURE_PROMPT,
         service_module.CAPTURE_DIRECTION_PROMPT,
+        service_module.CAPTURE_OBSERVATION_PROMPT,
     ]
 
 
