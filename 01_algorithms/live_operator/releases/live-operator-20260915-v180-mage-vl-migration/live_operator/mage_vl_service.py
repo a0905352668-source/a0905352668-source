@@ -33,6 +33,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from live_operator.capture_evidence import (
+    CAPTURE_EVIDENCE_REVISION,
+    decode_capture_frames,
+)
+from live_operator.inference_priority import ProductionFirstGate
 from live_operator.vlm_review import (
     VLM_EVIDENCE_REVISION,
     VLMReviewResult,
@@ -62,6 +67,23 @@ Return exactly one ASCII line and nothing else: LABEL=KEEP_NON_CALL_PHONE_USE,
 LABEL=FILTER_FALSE_POSITIVE, or LABEL=UNCERTAIN."""
 PROMPT_REVISION = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
 
+CAPTURE_PROMPT = """You review chronological workplace camera evidence after a phone has already
+passed a genuine-phone/use check. Decide only whether the phone camera could be
+capturing a protected computer screen. Use the full scene for screen and partition
+geometry, the native-detail person view for posture, and the phone/hand detail only
+as supplemental evidence. Do not infer camera direction from an ambiguous tiny image.
+
+Choose exactly one decision:
+- CAPTURE_POSSIBLE: a phone is raised or aimed so its camera may see a protected screen.
+- IMPOSSIBLE_FLAT_OR_DOWN: the phone is clearly flat or directed downward.
+- IMPOSSIBLE_AWAY_FROM_SCREEN: the camera is clearly directed away from every screen.
+- IMPOSSIBLE_BLOCKED: an opaque obstacle clearly blocks the phone-to-screen view.
+- NOT_PHONE_OR_NO_CAPTURE_ACTION: no phone capture action is visible.
+- UNCERTAIN: orientation, geometry, obstruction, or temporal evidence is insufficient.
+
+Return exactly one ASCII line and nothing else: LABEL=<decision>."""
+CAPTURE_PROMPT_REVISION = hashlib.sha256(CAPTURE_PROMPT.encode("utf-8")).hexdigest()
+
 _LABEL_PATTERN = re.compile(
     r"(?:LABEL=)?(KEEP_NON_CALL_PHONE_USE|FILTER_FALSE_POSITIVE|UNCERTAIN)\Z"
 )
@@ -70,9 +92,27 @@ _RESULT_BY_LABEL = {
     "FILTER_FALSE_POSITIVE": "filter",
     "UNCERTAIN": "uncertain",
 }
+_CAPTURE_LABELS = frozenset(
+    {
+        "CAPTURE_POSSIBLE",
+        "IMPOSSIBLE_FLAT_OR_DOWN",
+        "IMPOSSIBLE_AWAY_FROM_SCREEN",
+        "IMPOSSIBLE_BLOCKED",
+        "NOT_PHONE_OR_NO_CAPTURE_ACTION",
+        "UNCERTAIN",
+    }
+)
+_CAPTURE_LABEL_PATTERN = re.compile(
+    r"(?:LABEL=)?(CAPTURE_POSSIBLE|IMPOSSIBLE_FLAT_OR_DOWN|"
+    r"IMPOSSIBLE_AWAY_FROM_SCREEN|IMPOSSIBLE_BLOCKED|"
+    r"NOT_PHONE_OR_NO_CAPTURE_ACTION|UNCERTAIN)\Z"
+)
 _SAFE_EVENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_REQUEST_ID = re.compile(r"[A-Fa-f0-9]{64}\Z")
 _EXPECTED_ARCHIVE_MEMBERS = frozenset({"request.json", "clip.mp4", "overlay.json"})
+_EXPECTED_CAPTURE_ARCHIVE_MEMBERS = frozenset(
+    {"request.json", "clip.mp4", "overlay.json", "visibility.json"}
+)
 _MAX_METADATA_BYTES = 8 * 1024 * 1024
 _AUTH_WINDOW_SECONDS = 120
 _UPLOAD_DEADLINE_SECONDS = 30.0
@@ -96,6 +136,60 @@ class VideoMetadata:
     height: int
     fps: float
     frame_count: int
+
+
+def capture_request_id(
+    event_id: str,
+    clip_path: str | Path,
+    overlay_path: str | Path,
+    visibility_path: str | Path,
+    *,
+    model_version: str,
+    prompt_revision: str,
+    evidence_revision: str,
+) -> str:
+    if _SAFE_EVENT_ID.fullmatch(event_id) is None:
+        raise ValueError("invalid capture-review event_id")
+    if any(
+        _SAFE_EVENT_ID.fullmatch(value) is None
+        for value in (model_version, prompt_revision, evidence_revision)
+    ):
+        raise ValueError("invalid capture-review revision")
+    digest = hashlib.sha256()
+    for value in (
+        "jiankong-capture-review-v1",
+        event_id,
+        model_version,
+        prompt_revision,
+        evidence_revision,
+    ):
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    for logical_name, raw_path in (
+        ("clip.mp4", clip_path),
+        ("overlay.json", overlay_path),
+        ("visibility.json", visibility_path),
+    ):
+        path = Path(raw_path)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as error:
+            raise ValueError("capture-review input is unavailable") from error
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode):
+                raise ValueError("capture-review input must be a regular file")
+            digest.update(logical_name.encode("ascii"))
+            digest.update(b"\0")
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = -1
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+    return digest.hexdigest()
 
 
 def _model_directory_fingerprint(model_path: Path) -> str:
@@ -554,6 +648,18 @@ class MageVLReviewer:
         self.chat_text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
+        capture_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video"},
+                    {"type": "text", "text": CAPTURE_PROMPT},
+                ],
+            }
+        ]
+        self.capture_chat_text = self.processor.apply_chat_template(
+            capture_messages, tokenize=False, add_generation_prompt=True
+        )
 
     @staticmethod
     def _load_model(model_path: Path, gpu_weight_memory: str, cpu_memory: str):
@@ -707,6 +813,139 @@ class MageVLReviewer:
             "evidence_complete": not incomplete,
         }
 
+    def review_capture(
+        self,
+        video_path: Path,
+        overlay_path: Path,
+        visibility_path: Path,
+        cancel_event: threading.Event,
+    ) -> dict[str, Any]:
+        import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        def result(
+            label: str,
+            *,
+            labels: list[str],
+            candidate_count: int,
+            complete: bool,
+            cancelled: bool = False,
+        ) -> dict[str, Any]:
+            return {
+                "label": label,
+                "cancelled": cancelled,
+                "model_version": self.model_version,
+                "prompt_revision": CAPTURE_PROMPT_REVISION,
+                "evidence_revision": CAPTURE_EVIDENCE_REVISION,
+                "candidate_count": candidate_count,
+                "candidate_labels": labels,
+                "evidence_complete": complete,
+            }
+
+        if cancel_event.is_set():
+            return result(
+                "UNCERTAIN", labels=[], candidate_count=0, complete=False, cancelled=True
+            )
+        try:
+            overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+            visibility = json.loads(visibility_path.read_text(encoding="utf-8"))
+            if not isinstance(overlay, dict) or not isinstance(visibility, dict):
+                raise ValueError("capture metadata must be objects")
+            sequences = decode_capture_frames(video_path, overlay, visibility)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return result(
+                "UNCERTAIN", labels=[], candidate_count=0, complete=False
+            )
+
+        labels: list[str] = []
+        incomplete = not sequences or any(len(sequence.frames) != 16 for sequence in sequences)
+
+        class CancelWhenProductionArrives(StoppingCriteria):
+            def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> Any:
+                del scores, kwargs
+                return torch.full(
+                    (input_ids.shape[0], 1),
+                    cancel_event.is_set(),
+                    dtype=torch.bool,
+                    device=input_ids.device,
+                )
+
+        if sequences:
+            with self._lock:
+                for sequence in sequences:
+                    if cancel_event.is_set():
+                        return result(
+                            "UNCERTAIN",
+                            labels=labels,
+                            candidate_count=len(sequences),
+                            complete=False,
+                            cancelled=True,
+                        )
+                    if len(sequence.frames) != 16:
+                        continue
+                    inputs = self.processor(
+                        text=[self.capture_chat_text],
+                        videos=[list(sequence.frames)],
+                        return_tensors="pt",
+                        padding=True,
+                    )
+                    inputs = {
+                        key: (value.to(self.model.device) if hasattr(value, "to") else value)
+                        for key, value in inputs.items()
+                    }
+                    if "pixel_values" in inputs:
+                        inputs["pixel_values"] = inputs["pixel_values"].to(self.model.dtype)
+                    with torch.inference_mode():
+                        output = self.model.generate(
+                            **inputs,
+                            max_new_tokens=24,
+                            do_sample=False,
+                            stopping_criteria=StoppingCriteriaList(
+                                [CancelWhenProductionArrives()]
+                            ),
+                        )
+                    if cancel_event.is_set():
+                        del output, inputs
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        return result(
+                            "UNCERTAIN",
+                            labels=labels,
+                            candidate_count=len(sequences),
+                            complete=False,
+                            cancelled=True,
+                        )
+                    raw = self.processor.tokenizer.decode(
+                        output[0, inputs["input_ids"].shape[1] :],
+                        skip_special_tokens=True,
+                    ).strip()
+                    match = _CAPTURE_LABEL_PATTERN.fullmatch(raw)
+                    label = match.group(1) if match else "UNCERTAIN"
+                    labels.append(label)
+                    del output, inputs
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    if label == "CAPTURE_POSSIBLE":
+                        break
+
+        if "CAPTURE_POSSIBLE" in labels:
+            aggregate = "CAPTURE_POSSIBLE"
+        elif (
+            labels
+            and not incomplete
+            and len(labels) == len(sequences)
+            and len(set(labels)) == 1
+        ):
+            aggregate = labels[0]
+        else:
+            aggregate = "UNCERTAIN"
+        return result(
+            aggregate,
+            labels=labels,
+            candidate_count=len(sequences),
+            complete=not incomplete,
+        )
+
 
 class ReviewApplication:
     def __init__(
@@ -717,12 +956,17 @@ class ReviewApplication:
         cache_dir: Path,
         max_request_bytes: int,
         clock: Any = time.time,
+        priority_clock: Any = time.monotonic,
+        offline_quiet_seconds: float = 30.0,
     ) -> None:
         self.reviewer = reviewer
         self.shared_secret = shared_secret
         self.cache_dir = cache_dir
         self.max_request_bytes = max_request_bytes
         self.clock = clock
+        self.priority = ProductionFirstGate(
+            priority_clock, quiet_seconds=offline_quiet_seconds
+        )
         self.model_fingerprint = getattr(
             reviewer,
             "model_fingerprint",
@@ -731,8 +975,11 @@ class ReviewApplication:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
             os.chmod(self.cache_dir, 0o700)
+        self.capture_cache_dir = self.cache_dir / "capture"
+        self.capture_cache_dir.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            os.chmod(self.capture_cache_dir, 0o700)
         self._cache_lock = threading.Lock()
-        self._inference_slot = threading.BoundedSemaphore(1)
 
     def health(self) -> dict[str, Any]:
         return {
@@ -740,6 +987,9 @@ class ReviewApplication:
             "model_version": self.reviewer.model_version,
             "prompt_revision": PROMPT_REVISION,
             "evidence_revision": VLM_EVIDENCE_REVISION,
+            "capture_prompt_revision": CAPTURE_PROMPT_REVISION,
+            "capture_evidence_revision": CAPTURE_EVIDENCE_REVISION,
+            "scheduler": self.priority.snapshot(),
         }
 
     def authenticate(self, timestamp: str | None, signature: str | None, body: bytes) -> bool:
@@ -788,10 +1038,90 @@ class ReviewApplication:
             self._write_cache(event_id, input_sha256, response)
             return response
 
+    def capture_archive(
+        self, body: bytes, cancel_event: threading.Event
+    ) -> dict[str, Any]:
+        if len(body) > self.max_request_bytes:
+            raise ValueError("request is too large")
+        with tempfile.TemporaryDirectory(prefix="jiankong-mage-vl-capture-") as name:
+            temporary = Path(name)
+            event_id, request_id, clip_path, overlay_path, visibility_path = (
+                self._unpack_capture(body, temporary)
+            )
+            expected_request_id = capture_request_id(
+                event_id,
+                clip_path,
+                overlay_path,
+                visibility_path,
+                model_version=self.reviewer.model_version,
+                prompt_revision=CAPTURE_PROMPT_REVISION,
+                evidence_revision=CAPTURE_EVIDENCE_REVISION,
+            )
+            if not hmac.compare_digest(expected_request_id, request_id):
+                raise ValueError("capture request evidence fence mismatch")
+            input_sha256 = self._capture_input_sha256(
+                clip_path, overlay_path, visibility_path
+            )
+            cached = self._read_capture_cache(event_id, request_id, input_sha256)
+            if cached is not None:
+                return cached
+            started = time.perf_counter()
+            decision = self.reviewer.review_capture(
+                clip_path, overlay_path, visibility_path, cancel_event
+            )
+            self._validate_capture_decision(decision)
+            response = {
+                "schema_version": 1,
+                "event_id": event_id,
+                "request_id": request_id,
+                **decision,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "latency_seconds": round(time.perf_counter() - started, 6),
+            }
+            if response.get("cancelled") is not True:
+                self._write_capture_cache(event_id, input_sha256, response)
+            return response
+
+    def _validate_capture_decision(self, decision: object) -> None:
+        if not isinstance(decision, dict):
+            raise RuntimeError("invalid capture-review decision")
+        candidate_labels = decision.get("candidate_labels")
+        candidate_count = decision.get("candidate_count")
+        if (
+            decision.get("label") not in _CAPTURE_LABELS
+            or decision.get("model_version") != self.reviewer.model_version
+            or decision.get("prompt_revision") != CAPTURE_PROMPT_REVISION
+            or decision.get("evidence_revision") != CAPTURE_EVIDENCE_REVISION
+            or type(decision.get("cancelled")) is not bool
+            or type(decision.get("evidence_complete")) is not bool
+            or type(candidate_count) is not int
+            or candidate_count < 0
+            or not isinstance(candidate_labels, list)
+            or any(label not in _CAPTURE_LABELS for label in candidate_labels)
+            or (
+                decision.get("cancelled") is True
+                and decision.get("label") != "UNCERTAIN"
+            )
+        ):
+            raise RuntimeError("invalid capture-review decision")
+
     @staticmethod
     def _input_sha256(clip_path: Path, overlay_path: Path) -> str:
         digest = hashlib.sha256()
         for path in (clip_path, overlay_path):
+            digest.update(path.name.encode("ascii"))
+            digest.update(b"\0")
+            with path.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _capture_input_sha256(
+        clip_path: Path, overlay_path: Path, visibility_path: Path
+    ) -> str:
+        digest = hashlib.sha256()
+        for path in (clip_path, overlay_path, visibility_path):
             digest.update(path.name.encode("ascii"))
             digest.update(b"\0")
             with path.open("rb") as stream:
@@ -867,8 +1197,91 @@ class ReviewApplication:
                 raise ValueError("overlay event_id mismatch")
             return event_id, request_id, clip_path, overlay_path
 
+    @staticmethod
+    def _unpack_capture(
+        body: bytes, destination: Path
+    ) -> tuple[str, str, Path, Path, Path]:
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(body), "r")
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError("invalid capture request archive") from error
+        with archive:
+            member_names = archive.namelist()
+            if (
+                len(member_names) != len(_EXPECTED_CAPTURE_ARCHIVE_MEMBERS)
+                or set(member_names) != _EXPECTED_CAPTURE_ARCHIVE_MEMBERS
+            ):
+                raise ValueError("unexpected capture request archive members")
+            info_by_name = {info.filename: info for info in archive.infolist()}
+            if any(
+                info.compress_type != zipfile.ZIP_STORED
+                or info.file_size < 0
+                or info.compress_size != info.file_size
+                for info in info_by_name.values()
+            ):
+                raise ValueError("compressed capture request members are not allowed")
+            if sum(info.file_size for info in info_by_name.values()) > len(body):
+                raise ValueError("capture request archive expands beyond its size limit")
+            for metadata_name in ("request.json", "overlay.json", "visibility.json"):
+                if info_by_name[metadata_name].file_size > _MAX_METADATA_BYTES:
+                    raise ValueError("capture request metadata is too large")
+            try:
+                request_payload = json.loads(archive.read("request.json").decode("utf-8"))
+            except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ValueError("invalid capture request metadata") from error
+            if not isinstance(request_payload, dict):
+                raise ValueError("invalid capture request metadata")
+            event_id = request_payload.get("event_id")
+            request_id = request_payload.get("request_id")
+            if (
+                not isinstance(event_id, str)
+                or _SAFE_EVENT_ID.fullmatch(event_id) is None
+                or not isinstance(request_id, str)
+                or _SAFE_REQUEST_ID.fullmatch(request_id) is None
+                or request_payload.get("prompt_revision") != CAPTURE_PROMPT_REVISION
+                or request_payload.get("evidence_revision") != CAPTURE_EVIDENCE_REVISION
+                or request_payload.get("schema_version") != 1
+            ):
+                raise ValueError("invalid capture request event_id")
+            targets = {
+                "clip.mp4": destination / "clip.mp4",
+                "overlay.json": destination / "overlay.json",
+                "visibility.json": destination / "visibility.json",
+            }
+            for source_name, target in targets.items():
+                with archive.open(source_name, "r") as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+            if any(not path.stat().st_size for path in targets.values()):
+                raise ValueError("empty capture review input")
+            try:
+                overlay_payload = json.loads(
+                    targets["overlay.json"].read_text(encoding="utf-8")
+                )
+                visibility_payload = json.loads(
+                    targets["visibility.json"].read_text(encoding="utf-8")
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ValueError("invalid capture review metadata") from error
+            if (
+                not isinstance(overlay_payload, dict)
+                or overlay_payload.get("event_id") != event_id
+                or not isinstance(visibility_payload, dict)
+                or visibility_payload.get("schema_version") != 1
+            ):
+                raise ValueError("capture review metadata mismatch")
+            return (
+                event_id,
+                request_id,
+                targets["clip.mp4"],
+                targets["overlay.json"],
+                targets["visibility.json"],
+            )
+
     def _cache_path(self, event_id: str) -> Path:
         return self.cache_dir / f"{event_id}.json"
+
+    def _capture_cache_path(self, event_id: str) -> Path:
+        return self.capture_cache_dir / f"{event_id}.json"
 
     def _read_cache(
         self, event_id: str, request_id: str, input_sha256: str
@@ -913,6 +1326,63 @@ class ReviewApplication:
 
     def _write_cache(self, event_id: str, input_sha256: str, response: dict[str, Any]) -> None:
         target = self._cache_path(event_id)
+        temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        with self._cache_lock:
+            try:
+                temporary.write_text(
+                    json.dumps(
+                        {
+                            "input_sha256": input_sha256,
+                            "model_fingerprint": self.model_fingerprint,
+                            "response": response,
+                        },
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                if os.name == "posix":
+                    os.chmod(temporary, 0o600)
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def _read_capture_cache(
+        self, event_id: str, request_id: str, input_sha256: str
+    ) -> dict[str, Any] | None:
+        with self._cache_lock:
+            try:
+                payload = json.loads(
+                    self._capture_cache_path(event_id).read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                return None
+        if not (
+            isinstance(payload, dict)
+            and payload.get("input_sha256") == input_sha256
+            and payload.get("model_fingerprint") == self.model_fingerprint
+            and isinstance(payload.get("response"), dict)
+        ):
+            return None
+        response = dict(payload["response"])
+        response["request_id"] = request_id
+        if (
+            response.get("schema_version") != 1
+            or response.get("event_id") != event_id
+            or response.get("label") not in _CAPTURE_LABELS
+            or response.get("model_version") != self.reviewer.model_version
+            or response.get("prompt_revision") != CAPTURE_PROMPT_REVISION
+            or response.get("evidence_revision") != CAPTURE_EVIDENCE_REVISION
+            or response.get("cancelled") is not False
+        ):
+            return None
+        return response
+
+    def _write_capture_cache(
+        self, event_id: str, input_sha256: str, response: dict[str, Any]
+    ) -> None:
+        target = self._capture_cache_path(event_id)
         temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         with self._cache_lock:
             try:
@@ -986,7 +1456,7 @@ def make_handler(application: ReviewApplication):
 
         def do_POST(self) -> None:  # noqa: N802
             self._mark_headers_complete()
-            if self.path != "/v1/review":
+            if self.path not in {"/v1/review", "/v1/capture-review"}:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
             if self.headers.get_content_type() != "application/zip":
@@ -1014,24 +1484,34 @@ def make_handler(application: ReviewApplication):
             ):
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "authentication failed"})
                 return
-            # Upload and authentication never occupy the only model slot.  A
-            # slow or unauthenticated client therefore cannot stall inference.
-            if not application._inference_slot.acquire(blocking=False):
+            kind = "production" if self.path == "/v1/review" else "offline"
+            if kind == "production":
+                application.priority.production_arrived()
+            lease = application.priority.try_acquire(kind)
+            if lease is None:
                 self.send_response(int(HTTPStatus.SERVICE_UNAVAILABLE))
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Retry-After", "2")
+                self.send_header("Retry-After", "2" if kind == "production" else "30")
                 busy_body = b'{"error":"review service is busy"}'
                 self.send_header("Content-Length", str(len(busy_body)))
                 self.end_headers()
                 self.wfile.write(busy_body)
                 return
+            started = time.perf_counter()
+            failed = False
             try:
                 try:
-                    response = application.review_archive(body)
+                    response = (
+                        application.review_archive(body)
+                        if kind == "production"
+                        else application.capture_archive(body, lease.cancelled)
+                    )
                 except ValueError:
+                    failed = True
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid review input"})
                     return
                 except Exception:
+                    failed = True
                     self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "review failed"})
                     return
                 self._json(
@@ -1040,7 +1520,10 @@ def make_handler(application: ReviewApplication):
                     request_digest=str(self.headers.get("X-Jiankong-Signature")),
                 )
             finally:
-                application._inference_slot.release()
+                lease.release(
+                    latency_seconds=time.perf_counter() - started,
+                    error=failed,
+                )
 
         def _read_body(self, length: int) -> bytes:
             deadline = time.monotonic() + _UPLOAD_DEADLINE_SECONDS
@@ -1176,6 +1659,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-weight-memory", default="3800MiB")
     parser.add_argument("--cpu-memory", default="24GiB")
     parser.add_argument("--max-request-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--offline-quiet-seconds", type=float, default=30.0)
     parser.add_argument("--tls-cert-file", type=Path)
     parser.add_argument("--tls-key-file", type=Path)
     parser.add_argument("--gpu-lock-file", type=Path, required=True)
@@ -1188,6 +1672,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("invalid port")
     if not 1024 <= args.max_request_bytes <= 256 * 1024 * 1024:
         raise SystemExit("invalid max request size")
+    if not 1.0 <= args.offline_quiet_seconds <= 3600.0:
+        raise SystemExit("invalid offline quiet period")
     if args.host not in {"127.0.0.1", "localhost", "::1"} and (
         args.tls_cert_file is None or args.tls_key_file is None
     ):
@@ -1241,6 +1727,7 @@ def main(argv: list[str] | None = None) -> int:
             shared_secret=secret,
             cache_dir=args.cache_dir,
             max_request_bytes=args.max_request_bytes,
+            offline_quiet_seconds=args.offline_quiet_seconds,
         )
         server.RequestHandlerClass = make_handler(application)
         server.server_activate()

@@ -221,6 +221,7 @@ main() {
     --gpu-weight-memory "3800MiB" \
     --cpu-memory "24GiB" \
     --max-request-bytes "67108864" \
+    --offline-quiet-seconds "30" \
     --tls-cert-file "${TLS_CERT_FILE}" \
     --tls-key-file "${TLS_KEY_FILE}" \
     --gpu-lock-file "${GPU_LOCK_FILE}"
