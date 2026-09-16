@@ -129,20 +129,37 @@ PROMPT_REVISION = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
 CAPTURE_PROMPT = """You review a chronological short video after stage one has already confirmed
 that the target person is actively using a genuine phone. Do not re-evaluate whether
 the object is a phone. Every frame is one stable joint crop containing the same target
-person and the associated nearest protected screen, so their relative position and
-motion are preserved. Decide only whether a camera on the phone could plausibly see
-any part of that screen at any moment. When the phone front/back or lens direction
-cannot be resolved, choose UNCERTAIN instead of guessing that capture is impossible.
+person and the associated nearest protected screen, without detection-box overlays.
+
+Your task is to identify events that can be reliably excluded from screen capture,
+not to demand proof that a person is actually taking a photograph. Consider the phone
+pose and direction, its position relative to the protected screen, movement over time,
+and opaque obstacles such as partitions. Exclude an event only when clear visual
+evidence supports a phone-use behavior unrelated to capturing the screen and there
+are no conflicting signs. Retain events with a plausible screen-capture opportunity
+or with insufficient evidence for reliable exclusion.
+
+Absence of a shutter press or a typical photography gesture is not an exclusion
+reason. Looking at the phone, tapping it, or holding it low alone does not rule out
+screen capture. A visible phone display does not by itself establish where the rear
+camera points. Do not infer that the lens faces away when the phone front/back or
+camera direction is unclear. Do not treat an obstacle as blocking unless its position
+actually obstructs the phone-to-screen view. You need not establish that recording
+started or that a photograph succeeded.
 
 Choose exactly one decision:
-- CAPTURE_POSSIBLE: a phone is raised or aimed so its camera may see a protected screen.
-- IMPOSSIBLE_FLAT_OR_DOWN: the phone is clearly flat or directed downward.
-- IMPOSSIBLE_AWAY_FROM_SCREEN: the camera is clearly directed away from every screen.
-- IMPOSSIBLE_BLOCKED: an opaque obstacle clearly blocks the phone-to-screen view.
-- NOT_PHONE_OR_NO_CAPTURE_ACTION: the confirmed phone is used normally and never
-  raised, aimed, or moved as if to capture the screen. Do not use this label to dispute
-  the stage-one phone decision.
-- UNCERTAIN: orientation, geometry, obstruction, or temporal evidence is insufficient.
+- CAPTURE_POSSIBLE: the pose, position, or movement makes screen capture plausible,
+  even if no shutter action is visible.
+- IMPOSSIBLE_FLAT_OR_DOWN: clear pose and spatial evidence support exclusion because
+  the camera is directed toward the desk/floor rather than the protected screen,
+  without conflicting aiming or capture signs. Low position alone is insufficient.
+- IMPOSSIBLE_AWAY_FROM_SCREEN: clear camera-direction and spatial evidence support
+  exclusion because it faces away from the protected screen, without conflicting signs.
+- IMPOSSIBLE_BLOCKED: a clearly positioned opaque obstacle obstructs the camera view
+  of the protected screen, without conflicting unobstructed capture signs.
+- UNCERTAIN: the phone direction, action, spatial relation, or obstruction is ambiguous,
+  or the visual evidence is too small, blurred, incomplete, or conflicting to exclude
+  screen capture reliably. This decision retains the event.
 
 Return exactly one ASCII line and nothing else: LABEL=<decision>."""
 CAPTURE_PROMPT_REVISION = hashlib.sha256(CAPTURE_PROMPT.encode("utf-8")).hexdigest()
