@@ -23,6 +23,12 @@ This design covers an offline experiment only. It must not change the live
 selector, live calibration, event visibility, services, cameras, recording,
 DeepStream, or the Mage-VL service on `192.168.104.54`.
 
+The offline experiment must not consume production inference capacity in a
+way that delays foreground detection or review. Before any model-backed run,
+the runner must prove that it is using an isolated compute target that is not
+the live `.54` endpoint. If isolated compute is unavailable, it must stop with
+an explicit resource-isolation error instead of borrowing production capacity.
+
 ## Current-system findings
 
 The current pipeline already has screen polygons and several two-dimensional
@@ -210,6 +216,9 @@ The experiment may proceed to a separate shadow-mode proposal only if:
 7. The live release, selector, runtime configuration, event records, and public
    endpoint remain byte-for-byte or state-equivalent to their pre-experiment
    baseline.
+8. The complete focused offline test matrix finishes and produces a comparison
+   report; partial execution or a sample smoke run is not represented as test
+   completion.
 
 Passing these criteria does not itself authorize deployment. Shadow mode and
 production filtering require separate review and approval.
@@ -236,3 +245,5 @@ During this design's offline phase:
   record is changed;
 - no live calibration or prompt revision is published;
 - experiment output is kept outside the live run and dashboard directories.
+- the live `.54` review endpoint is not used for experimental inference; an
+  isolated model target is a mandatory precondition for model-backed tests.
