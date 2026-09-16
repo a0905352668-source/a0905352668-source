@@ -12,13 +12,18 @@ import pytest
 
 from live_operator.capture_evidence import CAPTURE_EVIDENCE_REVISION
 from live_operator.mage_vl_service import (
+    CAPTURE_PROMPT,
     CAPTURE_PROMPT_REVISION,
+    EARLY_RESCUE_PROMPT,
+    FOCUS_PROMPT,
+    NATIVE_PROMPT,
     PROMPT_REVISION,
     BoundedReviewHTTPServer,
     MageVLReviewer,
     ReviewApplication,
     capture_request_id,
     make_handler,
+    select_candidate_sequences,
 )
 from live_operator.vlm_review import (
     VLM_EVIDENCE_REVISION,
@@ -202,7 +207,7 @@ def _post(application: ReviewApplication, path: str, body: bytes) -> tuple[int, 
 
 
 def test_stage_one_contract_and_cache_remain_unchanged(tmp_path: Path) -> None:
-    assert PROMPT_REVISION == "754be1376959495c94a661bed1133bec191af9a615af9d5fcfb92230ac3e6b15"
+    assert PROMPT_REVISION == "600887293a7b364de10ee857979dd0713903914cc22212a66ee6c55169b7b993"
     assert VLM_EVIDENCE_REVISION == "person-roi20-span5s-pre4-native-focus-temporal-early8-jpeg92-v20"
     reviewer = FakeReviewer()
     now = [31.0]
@@ -290,7 +295,35 @@ def test_health_exposes_capture_identity_and_scheduler(tmp_path: Path) -> None:
     assert health["scheduler"]["active_kind"] is None
 
 
-def test_reviewer_initializes_two_prompts_but_loads_one_model(
+def test_stage_one_selects_twenty_frames_with_four_before_alarm() -> None:
+    entries = [
+        {
+            "track_id": "person-1",
+            "time_sec": index * 0.25,
+            "frame_index": index,
+            "alarm": index == 8,
+        }
+        for index in range(40)
+    ]
+
+    sequences = select_candidate_sequences(
+        {"bbox_timeline": entries},
+        frame_count=20,
+        target_span_seconds=5.0,
+        pre_alarm_frames=4,
+        video_fps=4.0,
+        video_frame_count=40,
+    )
+
+    assert len(sequences) == 1
+    selected = sequences[0].entries
+    assert len(selected) == 20
+    assert [entry["frame_index"] for entry in selected[:4]] == [4, 5, 6, 7]
+    assert selected[4]["frame_index"] == 8
+    assert len({entry["frame_index"] for entry in selected}) == 20
+
+
+def test_reviewer_initializes_production_and_capture_prompts_but_one_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_path = tmp_path / "model"
@@ -325,4 +358,13 @@ def test_reviewer_initializes_two_prompts_but_loads_one_model(
     assert loads == [True]
     assert reviewer.model is model
     assert reviewer.chat_text == "chat-1"
-    assert reviewer.capture_chat_text == "chat-2"
+    assert reviewer.focus_chat_text == "chat-2"
+    assert reviewer.early_rescue_chat_text == "chat-3"
+    assert reviewer.capture_chat_text == "chat-4"
+    prompt_texts = [call[0]["content"][1]["text"] for call in processor.calls]
+    assert prompt_texts == [
+        NATIVE_PROMPT,
+        FOCUS_PROMPT,
+        EARLY_RESCUE_PROMPT,
+        CAPTURE_PROMPT,
+    ]

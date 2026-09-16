@@ -48,7 +48,7 @@ from live_operator.vlm_review import (
 )
 
 
-PROMPT = """You are a conservative final review gate for a workplace phone-use alarm.
+NATIVE_PROMPT = """You are a conservative final review gate for a workplace phone-use alarm.
 The chronological video frames are tight crops of the same target person around the
 detector's alarm moment. The detector may be wrong; verify the visible object and
 interaction across multiple frames.
@@ -65,6 +65,62 @@ Choose exactly one decision:
 
 Return exactly one ASCII line and nothing else: LABEL=KEEP_NON_CALL_PHONE_USE,
 LABEL=FILTER_FALSE_POSITIVE, or LABEL=UNCERTAIN."""
+
+FOCUS_PROMPT = """You are a conservative second-stage review gate for a workplace
+phone-use alarm that the full-person review considered a possible false positive.
+The chronological video frames show the same target person around the detector's alarm
+moment. Each frame is a two-view composition: the left side preserves the full-person
+context, while the right side enlarges the detector's candidate object together with
+nearby hand context when that candidate is available. The enlarged view is only for
+pixel inspection and is not proof that the object is a phone. The detector may be wrong;
+verify the visible object and interaction consistently across multiple frames.
+
+Choose exactly one decision:
+- KEEP_NON_CALL_PHONE_USE: clear evidence that the target actively uses a genuine
+  mobile phone away from the ear, including viewing, tapping, gaming, messaging,
+  holding/aiming, or filming. This remains an alarm.
+- FILTER_FALSE_POSITIVE: the candidate is not a genuine phone (pen, paper/notebook
+  edge, badge, cup, remote, bare hand, or another object); or no active phone use is
+  visible; or a genuine phone is held/pressed at the ear in a calling posture.
+- UNCERTAIN: the pixels or temporal evidence are insufficient. Do not guess from the
+  detector event alone.
+
+Return exactly one ASCII line and nothing else: LABEL=KEEP_NON_CALL_PHONE_USE,
+LABEL=FILTER_FALSE_POSITIVE, or LABEL=UNCERTAIN."""
+
+EARLY_RESCUE_PROMPT = """Review the earliest eight chronological full-person frames of
+a workplace phone-use candidate. A real phone may be visible only briefly here and then
+be lowered, put down, or moved toward the ear. Judge what actually happens in these
+early frames; later disappearance must not erase earlier non-call phone use.
+
+First decide whether the object physically in the target person's hand is unmistakably
+a genuine mobile phone. Look for a visible rectangular handset or screen, its body or
+edges, and a credible hand-to-phone interaction. A detector event, hand pose, thin dark
+silhouette, pen, paper/notebook edge, badge, cup, remote, bare hand, or an indistinct
+object is not enough. Then decide whether any clearly visible phone use occurs away
+from the ear. Viewing, tapping, holding, aiming, or filming away from the ear counts,
+even if it lasts only a few frames and the person later puts the phone down. Filter a
+genuine phone as a call only when the visible phone interaction is exclusively an
+ear-pressed calling posture and no away-from-ear use is shown.
+
+Choose exactly one decision:
+- KEEP_NON_CALL_PHONE_USE: at least one frame clearly proves a genuine phone in the
+  hand with active use away from the ear, supported by the chronological interaction.
+- FILTER_FALSE_POSITIVE: the object is not clearly a phone, there is no active phone
+  use, or all visible genuine-phone interaction is exclusively at the ear.
+- UNCERTAIN: a genuine handset is plausible but the pixels or interaction cannot be
+  resolved without guessing.
+
+Return exactly one ASCII line and nothing else: LABEL=KEEP_NON_CALL_PHONE_USE,
+LABEL=FILTER_FALSE_POSITIVE, or LABEL=UNCERTAIN."""
+
+PROMPT = (
+    NATIVE_PROMPT
+    + "\n\nSECOND_STAGE_PROMPT\n"
+    + FOCUS_PROMPT
+    + "\n\nEARLY_RESCUE_PROMPT\n"
+    + EARLY_RESCUE_PROMPT
+)
 PROMPT_REVISION = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
 
 CAPTURE_PROMPT = """You review chronological workplace camera evidence after a phone has already
@@ -122,6 +178,9 @@ _MAX_VIDEO_WIDTH = 4096
 _MAX_VIDEO_HEIGHT = 2160
 _MAX_VIDEO_FPS = 120.0
 _MAX_VIDEO_DURATION_SECONDS = 30.0
+_REVIEW_FRAME_COUNT = 20
+_REVIEW_PRE_ALARM_FRAMES = 4
+_REVIEW_SPAN_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -250,6 +309,7 @@ def select_candidate_sequences(
     frame_count: int = 16,
     max_candidates: int = 8,
     target_span_seconds: float = 4.0,
+    pre_alarm_frames: int | None = None,
     video_fps: float | None = None,
     video_frame_count: int | None = None,
 ) -> list[CandidateSequence]:
@@ -264,6 +324,8 @@ def select_candidate_sequences(
         or video_frame_count <= 0
     ):
         raise ValueError("invalid video bounds")
+    if pre_alarm_frames is not None and not 0 < pre_alarm_frames < frame_count:
+        raise ValueError("pre-alarm frame count must be smaller than total frames")
 
     overlay = overlay_payload.get("overlay", overlay_payload)
     if not isinstance(overlay, Mapping):
@@ -333,14 +395,46 @@ def select_candidate_sequences(
         alarm_indices = [index for index, item in enumerate(entries) if item.get("alarm") is True]
         center = alarm_indices[0]
         if len(entries) > frame_count:
-            # This is not the first 16 clip frames. Keep eight real timeline
-            # observations before the first formal alarm and the following
-            # alarm evidence, matching the corrected 40-case baseline.
-            start = max(
-                0,
-                min(center - frame_count // 2, len(entries) - frame_count),
-            )
-            selected = entries[start : start + frame_count]
+            selected = []
+            if pre_alarm_frames is not None:
+                alarm_time = float(_finite_number(entries[center].get("time_sec")) or 0.0)
+                pre_span = float(target_span_seconds) * pre_alarm_frames / frame_count
+                post_span = max(0.0, float(target_span_seconds) - pre_span)
+                before = [
+                    entry
+                    for entry in entries
+                    if alarm_time - pre_span
+                    <= float(_finite_number(entry.get("time_sec")) or 0.0)
+                    < alarm_time
+                ]
+                after = [
+                    entry
+                    for entry in entries
+                    if alarm_time
+                    <= float(_finite_number(entry.get("time_sec")) or 0.0)
+                    <= alarm_time + post_span
+                ]
+
+                def sampled(pool: list[Mapping[str, Any]], count: int) -> list[Mapping[str, Any]]:
+                    if len(pool) < count:
+                        return []
+                    if count == 1:
+                        return [pool[-1]]
+                    positions = [
+                        round(position * (len(pool) - 1) / (count - 1))
+                        for position in range(count)
+                    ]
+                    return [pool[position] for position in positions]
+
+                selected = sampled(before, pre_alarm_frames) + sampled(
+                    after, frame_count - pre_alarm_frames
+                )
+            if len(selected) != frame_count:
+                # Safe fallback for an alarm near a clip boundary: retain real,
+                # compact evidence and never duplicate frames.
+                prior = pre_alarm_frames if pre_alarm_frames is not None else frame_count // 2
+                start = max(0, min(center - prior, len(entries) - frame_count))
+                selected = entries[start : start + frame_count]
         else:
             # Never fabricate temporal evidence by repeating a short sequence.
             selected = entries
@@ -466,18 +560,45 @@ def _evidence_panel(
     phone_boxes: Sequence[tuple[int, int, int, int]],
     *,
     image_size: int,
+    mode: str = "native",
 ) -> Any:
-    """Letterbox the unobstructed full-person crop used by the validated baseline."""
+    """Build either the native context or the conditional close-up evidence."""
 
     from PIL import Image
 
     canvas = Image.new("RGB", (image_size, image_size), (128, 128, 128))
 
-    # Preserve the detector crop's native pixels. Upscaling a distant
-    # 100-150px person to 448px magnifies interpolation blur and made pens,
-    # paper edges, and hands look more phone-like in regression. The validated
-    # baseline only downsizes oversized crops and centers smaller ones.
-    person_scale = min(1.0, image_size / image.width, image_size / image.height)
+    if mode not in {"native", "context_focus"}:
+        raise ValueError("invalid evidence panel mode")
+
+    if mode == "native":
+        person_scale = min(1.0, image_size / image.width, image_size / image.height)
+        person_size = (
+            max(1, min(image_size, int(round(image.width * person_scale)))),
+            max(1, min(image_size, int(round(image.height * person_scale)))),
+        )
+        person = (
+            image.resize(person_size, Image.Resampling.LANCZOS)
+            if person_size != (image.width, image.height)
+            else image.copy()
+        )
+        canvas.paste(
+            person,
+            ((image_size - person.width) // 2, (image_size - person.height) // 2),
+        )
+        return canvas
+
+    context_width = max(1, int(round(image_size * 0.64)))
+    focus_width = image_size - context_width
+
+    # Preserve the full-person crop's native pixels. Only downsize it when it
+    # cannot fit in the left context panel; never interpolate a small distant
+    # person and accidentally make a pen or paper edge look more phone-like.
+    person_scale = min(
+        1.0,
+        context_width / image.width,
+        image_size / image.height,
+    )
     person_size = (
         max(1, min(image_size, int(round(image.width * person_scale)))),
         max(1, min(image_size, int(round(image.height * person_scale)))),
@@ -488,10 +609,31 @@ def _evidence_panel(
         else image.copy()
     )
     person_origin = (
-        (image_size - person.width) // 2,
+        (context_width - person.width) // 2,
         (image_size - person.height) // 2,
     )
     canvas.paste(person, person_origin)
+
+    focus_box = _phone_focus_box(
+        phone_boxes,
+        crop_width=image.width,
+        crop_height=image.height,
+    )
+    if focus_box is not None and focus_width > 0:
+        focus = image.crop(focus_box)
+        focus_size = max(1, focus_width - 8)
+        focus_scale = min(focus_size / focus.width, focus_size / focus.height)
+        resized_size = (
+            max(1, int(round(focus.width * focus_scale))),
+            max(1, int(round(focus.height * focus_scale))),
+        )
+        if resized_size != (focus.width, focus.height):
+            focus = focus.resize(resized_size, Image.Resampling.LANCZOS)
+        focus_origin = (
+            context_width + (focus_width - focus.width) // 2,
+            (image_size - focus.height) // 2,
+        )
+        canvas.paste(focus, focus_origin)
 
     return canvas
 
@@ -533,7 +675,11 @@ def probe_video_metadata(video_path: Path) -> VideoMetadata:
 
 
 def decode_candidate_frames(
-    video_path: Path, sequences: Sequence[CandidateSequence], *, image_size: int = 448
+    video_path: Path,
+    sequences: Sequence[CandidateSequence],
+    *,
+    image_size: int = 448,
+    panel_mode: str = "native",
 ) -> list[tuple[str, list[Any], tuple[int, ...]]]:
     """Decode once from frame zero and return letterboxed PIL crops per target."""
 
@@ -602,6 +748,7 @@ def decode_candidate_frames(
                     image,
                     phone_boxes,
                     image_size=image_size,
+                    mode=panel_mode,
                 )
                 # The validated 40-event regression used quality-92 JPEG
                 # person crops.  Preserve that exact transport transform in
@@ -657,30 +804,24 @@ class MageVLReviewer:
         self.processor, self.model = self._load_model(
             model_path, gpu_weight_memory, cpu_memory
         )
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "video"},
-                    {"type": "text", "text": PROMPT},
-                ],
-            }
-        ]
-        self.chat_text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        capture_messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "video"},
-                    {"type": "text", "text": CAPTURE_PROMPT},
-                ],
-            }
-        ]
-        self.capture_chat_text = self.processor.apply_chat_template(
-            capture_messages, tokenize=False, add_generation_prompt=True
-        )
+        def chat_text(prompt: str) -> str:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video"},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            return self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+        self.chat_text = chat_text(NATIVE_PROMPT)
+        self.focus_chat_text = chat_text(FOCUS_PROMPT)
+        self.early_rescue_chat_text = chat_text(EARLY_RESCUE_PROMPT)
+        self.capture_chat_text = chat_text(CAPTURE_PROMPT)
 
     @staticmethod
     def _load_model(model_path: Path, gpu_weight_memory: str, cpu_memory: str):
@@ -725,10 +866,18 @@ class MageVLReviewer:
             metadata = probe_video_metadata(video_path)
             sequences = select_candidate_sequences(
                 payload,
+                frame_count=_REVIEW_FRAME_COUNT,
+                target_span_seconds=_REVIEW_SPAN_SECONDS,
+                pre_alarm_frames=_REVIEW_PRE_ALARM_FRAMES,
                 video_fps=metadata.fps,
                 video_frame_count=metadata.frame_count,
             )
-            candidate_frames = decode_candidate_frames(video_path, sequences)
+            candidate_frames = decode_candidate_frames(
+                video_path, sequences, panel_mode="native"
+            )
+            focus_candidate_frames = decode_candidate_frames(
+                video_path, sequences, panel_mode="context_focus"
+            )
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             return {
                 "result": "uncertain",
@@ -743,6 +892,10 @@ class MageVLReviewer:
         frame_map = {
             track_id: (frames, source_indices)
             for track_id, frames, source_indices in candidate_frames
+        }
+        focus_frame_map = {
+            track_id: (frames, source_indices)
+            for track_id, frames, source_indices in focus_candidate_frames
         }
         overlay = payload.get("overlay", payload)
         timeline = overlay.get("bbox_timeline", []) if isinstance(overlay, Mapping) else []
@@ -777,39 +930,75 @@ class MageVLReviewer:
             with self._lock:
                 for sequence in sequences:
                     frames, source_indices = frame_map.get(sequence.track_id, ([], ()))
+                    focus_frames, focus_source_indices = focus_frame_map.get(
+                        sequence.track_id, ([], ())
+                    )
                     if (
-                        len(sequence.entries) != 16
-                        or len(frames) != 16
-                        or len(set(source_indices)) != 16
+                        len(sequence.entries) != _REVIEW_FRAME_COUNT
+                        or len(frames) != _REVIEW_FRAME_COUNT
+                        or len(set(source_indices)) != _REVIEW_FRAME_COUNT
+                        or len(focus_frames) != _REVIEW_FRAME_COUNT
+                        or len(set(focus_source_indices)) != _REVIEW_FRAME_COUNT
+                        or tuple(source_indices) != tuple(focus_source_indices)
                     ):
                         incomplete = True
                         continue
-                    inputs = self.processor(
-                        text=[self.chat_text],
-                        videos=[frames],
-                        return_tensors="pt",
-                        padding=True,
-                    )
-                    inputs = {
-                        key: (value.to(self.model.device) if hasattr(value, "to") else value)
-                        for key, value in inputs.items()
-                    }
-                    if "pixel_values" in inputs:
-                        inputs["pixel_values"] = inputs["pixel_values"].to(self.model.dtype)
-                    with torch.inference_mode():
-                        output = self.model.generate(
-                            **inputs, max_new_tokens=24, do_sample=False
+                    def classify(evidence_frames: list[Any], prompt_text: str) -> str:
+                        inputs = self.processor(
+                            text=[prompt_text],
+                            videos=[evidence_frames],
+                            return_tensors="pt",
+                            padding=True,
                         )
-                    raw = self.processor.tokenizer.decode(
-                        output[0, inputs["input_ids"].shape[1] :],
-                        skip_special_tokens=True,
-                    ).strip()
-                    match = _LABEL_PATTERN.fullmatch(raw)
-                    label = match.group(1) if match else "UNCERTAIN"
+                        inputs = {
+                            key: (
+                                value.to(self.model.device)
+                                if hasattr(value, "to")
+                                else value
+                            )
+                            for key, value in inputs.items()
+                        }
+                        if "pixel_values" in inputs:
+                            inputs["pixel_values"] = inputs["pixel_values"].to(
+                                self.model.dtype
+                            )
+                        with torch.inference_mode():
+                            output = self.model.generate(
+                                **inputs, max_new_tokens=24, do_sample=False
+                            )
+                        raw = self.processor.tokenizer.decode(
+                            output[0, inputs["input_ids"].shape[1] :],
+                            skip_special_tokens=True,
+                        ).strip()
+                        match = _LABEL_PATTERN.fullmatch(raw)
+                        decision = match.group(1) if match else "UNCERTAIN"
+                        del output, inputs
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        return decision
+
+                    label = classify(frames, self.chat_text)
+                    if label == "FILTER_FALSE_POSITIVE":
+                        focus_label = classify(
+                            focus_frames,
+                            getattr(self, "focus_chat_text", self.chat_text),
+                        )
+                        if focus_label == "KEEP_NON_CALL_PHONE_USE":
+                            label = "KEEP_NON_CALL_PHONE_USE"
+                        elif focus_label != "FILTER_FALSE_POSITIVE":
+                            label = "UNCERTAIN"
+                        else:
+                            early_label = classify(
+                                frames[:8],
+                                getattr(
+                                    self, "early_rescue_chat_text", self.chat_text
+                                ),
+                            )
+                            if early_label == "KEEP_NON_CALL_PHONE_USE":
+                                label = "KEEP_NON_CALL_PHONE_USE"
+                            elif early_label != "FILTER_FALSE_POSITIVE":
+                                label = "UNCERTAIN"
                     labels.append(label)
-                    del output, inputs
-                    gc.collect()
-                    torch.cuda.empty_cache()
                     if label == "KEEP_NON_CALL_PHONE_USE":
                         break
         if "KEEP_NON_CALL_PHONE_USE" in labels:
