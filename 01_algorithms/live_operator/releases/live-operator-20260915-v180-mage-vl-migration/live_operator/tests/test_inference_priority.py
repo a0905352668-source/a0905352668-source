@@ -47,6 +47,27 @@ def test_production_arrival_cancels_active_offline_before_retry() -> None:
     production.release(latency_seconds=0.1)
 
 
+def test_validation_mode_starts_immediately_and_finishes_current_offline() -> None:
+    clock = FakeClock()
+    gate = ProductionFirstGate(
+        clock,
+        quiet_seconds=0.0,
+        cancel_offline_on_production=False,
+    )
+    offline = gate.try_acquire("offline")
+    assert offline is not None
+
+    gate.production_arrived()
+
+    assert not offline.cancelled.is_set()
+    assert gate.try_acquire("production") is None
+    assert gate.snapshot()["production_waiting"] == 1
+    offline.release(latency_seconds=2.0)
+    production = gate.try_acquire("production")
+    assert production is not None
+    production.release(latency_seconds=0.5)
+
+
 def test_production_can_start_without_waiting_for_quiet_time() -> None:
     clock = FakeClock()
     gate = ProductionFirstGate(clock, quiet_seconds=30.0)

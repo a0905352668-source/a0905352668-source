@@ -1167,7 +1167,7 @@ class ReviewApplication:
         max_request_bytes: int,
         clock: Any = time.time,
         priority_clock: Any = time.monotonic,
-        offline_quiet_seconds: float = 30.0,
+        offline_quiet_seconds: float = 0.0,
     ) -> None:
         self.reviewer = reviewer
         self.shared_secret = shared_secret
@@ -1175,7 +1175,9 @@ class ReviewApplication:
         self.max_request_bytes = max_request_bytes
         self.clock = clock
         self.priority = ProductionFirstGate(
-            priority_clock, quiet_seconds=offline_quiet_seconds
+            priority_clock,
+            quiet_seconds=offline_quiet_seconds,
+            cancel_offline_on_production=False,
         )
         self.model_fingerprint = getattr(
             reviewer,
@@ -1870,7 +1872,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu-weight-memory", default="3800MiB")
     parser.add_argument("--cpu-memory", default="24GiB")
     parser.add_argument("--max-request-bytes", type=int, default=64 * 1024 * 1024)
-    parser.add_argument("--offline-quiet-seconds", type=float, default=30.0)
+    parser.add_argument("--offline-quiet-seconds", type=float, default=0.0)
     parser.add_argument("--tls-cert-file", type=Path)
     parser.add_argument("--tls-key-file", type=Path)
     parser.add_argument("--gpu-lock-file", type=Path, required=True)
@@ -1883,7 +1885,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("invalid port")
     if not 1024 <= args.max_request_bytes <= 256 * 1024 * 1024:
         raise SystemExit("invalid max request size")
-    if not 1.0 <= args.offline_quiet_seconds <= 3600.0:
+    if not 0.0 <= args.offline_quiet_seconds <= 3600.0:
         raise SystemExit("invalid offline quiet period")
     if args.host not in {"127.0.0.1", "localhost", "::1"} and (
         args.tls_cert_file is None or args.tls_key_file is None

@@ -26,9 +26,11 @@ class ProductionFirstGate:
         self,
         clock: Callable[[], float],
         quiet_seconds: float = 30.0,
+        cancel_offline_on_production: bool = True,
     ) -> None:
         self._clock = clock
         self.quiet_seconds = float(quiet_seconds)
+        self.cancel_offline_on_production = bool(cancel_offline_on_production)
         self._lock = threading.Lock()
         self._active: GateLease | None = None
         self._last_production_at = float(clock())
@@ -46,7 +48,11 @@ class ProductionFirstGate:
         with self._lock:
             self._last_production_at = float(self._clock())
             self._production_waiting += 1
-            if self._active is not None and self._active.kind == "offline":
+            if (
+                self.cancel_offline_on_production
+                and self._active is not None
+                and self._active.kind == "offline"
+            ):
                 self._active.cancelled.set()
 
     def try_acquire(self, kind: WorkKind) -> GateLease | None:
@@ -54,8 +60,6 @@ class ProductionFirstGate:
             raise ValueError("invalid inference kind")
         with self._lock:
             now = float(self._clock())
-            if kind == "production" and self._production_waiting:
-                self._production_waiting -= 1
             if self._active is not None:
                 self._rejected[kind] += 1
                 return None
@@ -65,6 +69,8 @@ class ProductionFirstGate:
             ):
                 self._rejected[kind] += 1
                 return None
+            if kind == "production" and self._production_waiting:
+                self._production_waiting -= 1
             lease = GateLease(self, kind)
             self._active = lease
             self._admitted[kind] += 1
@@ -84,6 +90,7 @@ class ProductionFirstGate:
                     and self._active.kind == "offline"
                     and self._active.cancelled.is_set()
                 ),
+                "offline_preemptible": self.cancel_offline_on_production,
                 "quiet_remaining_seconds": quiet_remaining,
                 "production_admitted": self._admitted["production"],
                 "offline_admitted": self._admitted["offline"],

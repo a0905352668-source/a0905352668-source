@@ -24,6 +24,7 @@ from live_operator.mage_vl_service import (
     capture_request_id,
     make_handler,
     select_candidate_sequences,
+    _parser,
 )
 from live_operator.vlm_review import (
     VLM_EVIDENCE_REVISION,
@@ -293,6 +294,20 @@ def test_health_exposes_capture_identity_and_scheduler(tmp_path: Path) -> None:
     assert health["capture_prompt_revision"] == CAPTURE_PROMPT_REVISION
     assert health["capture_evidence_revision"] == CAPTURE_EVIDENCE_REVISION
     assert health["scheduler"]["active_kind"] is None
+
+
+def test_service_defaults_to_immediate_nonpreemptive_validation() -> None:
+    args = _parser().parse_args(
+        [
+            "--model", "/model",
+            "--model-version", "model-v1",
+            "--shared-secret-file", "/secret",
+            "--cache-dir", "/cache",
+            "--gpu-lock-file", "/lock",
+        ]
+    )
+
+    assert args.offline_quiet_seconds == 0.0
 
 
 def test_stage_one_selects_twenty_frames_with_four_before_alarm() -> None:
