@@ -40,6 +40,25 @@ TARGET_DIAGNOSTIC_PROMPTS.update({
     for key,value in TARGET_DESCRIPTIONS.items() if key != 'none'
 })
 TARGET_MAX_NEW_TOKENS = 192
+FACT_TEMPLATE = '''目标：{target}。
+绿色TARGET框为事件人，黄色PHONE框为其已确认的手机，蓝色编号轮廓为附近屏幕。标注只用于定位，不代表镜头指向或可见性。
+输入是同一事件的30帧短视频。只描述可见事实，不决定拍屏、不判断意图，不猜测不可见镜头。
+{question}
+只输出四行，使用等号；信息不足直接写未知，禁止编造：
+TARGET=<目标位置和外观>
+PHONE=<可见事实和相对视频时间；不清楚写未知>
+BLOCK=<本任务涉及的可见空间或遮挡事实；不清楚写未知>
+LABEL=UNCERTAIN
+'''
+FACT_QUESTIONS = {
+    'pose':'本次只看黄色手机和绿色目标：手机在左手还是右手、在腰胸眼哪一高度、长边竖着还是横着、手机平面是竖起还是平放、是否举起或放下。长边横着不等于平放。看不清平面就写未知。不要讨论屏幕遮挡，BLOCK写未知。',
+    'relation':'本次只看绿色目标与蓝色编号屏幕的位置：分别位于目标哪一侧、是否能看见显示内容、监控画面中有没有隔板。PHONE只描述手机与屏幕的可见位置。监控视线被遮挡不等于手机视线被遮挡；不能从二维重叠确认手机视线时，在BLOCK明确写手机视线未知。不要判断手机平面或镜头朝向。',
+}
+TARGET_DIAGNOSTIC_PROMPTS.update({
+    'target_box_'+kind+'_'+key:FACT_TEMPLATE.format(target=value,question=question)
+    for kind,question in FACT_QUESTIONS.items()
+    for key,value in TARGET_DESCRIPTIONS.items() if key!='none'
+})
 
 
 def parse_target_diagnostic(raw: str) -> dict[str, Any]:

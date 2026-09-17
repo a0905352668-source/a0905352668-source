@@ -58,8 +58,8 @@ def test_business_mapping_never_adopts_exclusion_or_truncation(label,parsed,trun
     ('CAPTURE_POSSIBLE', [42,99], 'CAPTURE_POSSIBLE', 'eos'),
     ('CAPTURE_POSSIBLE', [42]*192, 'UNCERTAIN', 'max_new_tokens'),
 ])
-@pytest.mark.parametrize('variant,markings',[('target_pro_02','clean'),('target_box_02','person-phone-screens-v1')])
-def test_capture_consumer_records_diagnostic_without_exclusion_leak(tmp_path,monkeypatch,diagnostic_label,ids,want,reason,variant,markings):
+@pytest.mark.parametrize('variant,markings,crop_profile',[('target_pro_02','clean','wide25'),('target_box_02','person-phone-screens-v1','wide25'),('target_box_pose_02','person-phone-screens-v1','tight10')])
+def test_capture_consumer_records_diagnostic_without_exclusion_leak(tmp_path,monkeypatch,diagnostic_label,ids,want,reason,variant,markings,crop_profile):
     # Only heavy external inference/preprocessing are substituted; the real
     # review_capture result, parser, token audit and business mapping execute.
     import contextlib
@@ -96,7 +96,7 @@ def test_capture_consumer_records_diagnostic_without_exclusion_leak(tmp_path,mon
     overlay = tmp_path/'overlay.json'
     visibility = tmp_path/'visibility.json'
     overlay.write_text('{}')
-    visibility.write_text(json.dumps({'capture_prompt_variant':variant,'capture_input_profile':'video5s30','capture_markings_profile':markings}))
+    visibility.write_text(json.dumps({'capture_prompt_variant':variant,'capture_input_profile':'video5s30','capture_markings_profile':markings,'capture_crop_profile':crop_profile}))
     result = reviewer.review_capture(tmp_path/'clip.mp4',overlay,visibility,threading.Event())
     assert result['label']==want
     assert result['candidate_diagnostics'][0]['label']==diagnostic_label
@@ -104,5 +104,6 @@ def test_capture_consumer_records_diagnostic_without_exclusion_leak(tmp_path,mon
     assert result['candidate_diagnostics'][0]['generated_tokens']==len(ids)
     assert result['candidate_evidence'][0]['model_video_sha256']=='actual-file-hash'
     assert result['candidate_evidence'][0]['markings_profile']==markings
+    assert result['candidate_evidence'][0]['crop_profile']==crop_profile
     assert result['candidate_evidence'][0]['visual_grid_thw']==[[1,28,28]]*30
     assert result['candidate_output_parsed']==[True]

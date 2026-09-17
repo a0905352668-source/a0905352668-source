@@ -16,6 +16,7 @@ from live_operator.capture_markings import capture_markings_profile, draw_captur
 CAPTURE_FRAME_COUNT = 30
 CAPTURE_CROP_MARGIN_RATIO = 0.25
 CAPTURE_INPUT_PROFILES = {'legacy': (30, 5.0), 'video5s30': (30, 5.0), 'video10s60': (60, 10.0)}
+CAPTURE_CROP_PROFILES = {'wide25':(0.25,24.0),'tight10':(0.10,8.0)}
 CAPTURE_EVIDENCE_REVISION = "person-nearby-screens-clean-video-timed-5s30-10s60-jpeg92-v5"
 
 
@@ -27,6 +28,13 @@ class CaptureSequence:
     times: tuple[float, ...]
     screen_ids: tuple[str, ...] = ()
     crop_box: tuple[int, int, int, int] | None = None
+
+
+def capture_crop_profile(visibility: Mapping[str,Any]) -> str:
+    profile=visibility.get('capture_crop_profile','wide25')
+    if not isinstance(profile,str) or profile not in CAPTURE_CROP_PROFILES:
+        raise ValueError('unknown offline crop profile')
+    return profile
 
 
 def build_capture_frame(
@@ -70,6 +78,7 @@ def decode_capture_frames(
     if type(target_frames) is not int or target_frames not in {30,60} or window_seconds not in {5.0,10.0}:
         raise ValueError('unsupported offline evidence window')
     markings = capture_markings_profile(visibility)
+    crop_profile = capture_crop_profile(visibility)
 
     overlay_root = overlay.get("overlay", overlay) if isinstance(overlay, Mapping) else {}
     timeline = overlay_root.get("bbox_timeline") if isinstance(overlay_root, Mapping) else None
@@ -134,6 +143,8 @@ def decode_capture_frames(
                 tuple(point for polygon in candidates.values() for point in polygon),
                 frame_width=width,
                 frame_height=height,
+                margin_ratio=CAPTURE_CROP_PROFILES[crop_profile][0],
+                minimum_margin=CAPTURE_CROP_PROFILES[crop_profile][1],
             )
         targets: dict[int, list[tuple[str, int, float, Mapping[str, Any]]]] = {}
         for track_id, entries in selected_by_track:
@@ -443,6 +454,7 @@ def _joint_crop_box(
     frame_width: int,
     frame_height: int,
     margin_ratio: float = CAPTURE_CROP_MARGIN_RATIO,
+    minimum_margin: float = 24.0,
 ) -> tuple[int, int, int, int]:
     xs = [float(box[0]) for box in person_boxes] + [
         float(box[2]) for box in person_boxes
@@ -454,8 +466,8 @@ def _joint_crop_box(
         raise ValueError("missing person-screen geometry")
     width = max(xs) - min(xs)
     height = max(ys) - min(ys)
-    margin_x = max(24.0, width * margin_ratio)
-    margin_y = max(24.0, height * margin_ratio)
+    margin_x = max(minimum_margin, width * margin_ratio)
+    margin_y = max(minimum_margin, height * margin_ratio)
     left = max(0, int(math.floor(min(xs) - margin_x)))
     top = max(0, int(math.floor(min(ys) - margin_y)))
     right = min(frame_width, int(math.ceil(max(xs) + margin_x)))
