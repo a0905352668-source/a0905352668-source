@@ -1,6 +1,6 @@
 # 防拍二阶段离线验证记录（2026-09-16）
 
-本记录按测试先后追加，初轮结果不代表后续结果；最新方法见文末的双版本对照。二阶段结果始终只作离线评估，未接入线上过滤。
+本记录按测试先后追加，初轮结果不代表后续结果；最新记录见文末，另附手机真假一阶段模型替代小样本实验。二阶段结果始终只作离线评估，未接入线上过滤。
 
 ## 初轮结论
 
@@ -355,3 +355,37 @@ opportunity只记录TARGET、MOTION、OPPORTUNITY、BASIS，机会词为“有�
 实际实验执行脚本SHA256为`8e86d76a9c909386310bb8199e34c0fc9d8ad4e640e44dfe1ae606e030745abb`；审查补强后的Git脚本SHA256为`4ed4600edbd52082c22b65084251fbdbe77c23c2ad3c27f2c762c6a66e03254f`，在实验停止后另存服务器`qwen_capture_prompt_probe_20260917_guarded.py`，原执行脚本保留。补强没有改变提示词、输入或推理参数，但不能声称本批执行了新内部监护代码。Mage恢复启动没有再出现root缓存所有者问题；最终签名及真实生产复核完成状态另记。
 
 09:10最终签名检查确认Mage ready=true、内存压力false，生产接纳4次且已有完成请求（累计65.562秒、最近9.230秒），生产／离线错误均0，当时仍在处理一条生产请求。这些是本次恢复以来计数，不是全历史稳定性。第一阶段提示词／v31注册表／证据版本均保持原值；Qwen18879已无监听，Mage8879正常。网页running、8路在线、79.631FPS、无告警。采集与网页没有重启，地址不变；GPU切换生成约13分钟、Mage冷加载与预热约3分钟，复核暂停总计约16分钟，不能描述为完全不影响前台复核。最终签名后结束本轮临时外部保护检查，不留周期任务。
+# 2026-09-17 手机真假一阶段替代试验
+
+用户批准一个小规模离线对照：4条非手机误报、4条清晰真手机；暂不更换线上 Mage，不启用拍屏二阶段，不更改 `192.168.104.53:8767`。
+
+从人工复核归档中只读导出候选，逐项检查人物及手部接触图后选定：n01 柔性浅色包装/纸片、n02 打开纸包/包装、n03 饮用深色圆柱杯、n07 阅读纸质材料；正例 p02、p03、p05、p11 具有清晰的手机本体/屏幕及离耳使用。它们是人工标记结合画面检查的工程小样本，不代表总体准确率；不得将所有人工误报都视为非手机。
+
+使用生产 `person-roi20-span5s-pre4-native-focus-temporal-early8-jpeg92-v20` 的采样、JPEG92、native20、focus20、早期native8、原提示词及补救次序。提示词版本 `600887293a7b364de10ee857979dd0713903914cc22212a66ee6c55169b7b993`。Qwen输入为FFV1 AVI原生短视频，保持同一组像素及顺序；AVI用4FPS承载选定序列，原始源帧索引另存，不宣称两种模型的时间编码、视觉token预算或预处理完全相同。输出上限24token，严格单行标签；非法格式或截断一律UNCERTAIN保留，不剥离思考文本后冒充合法结果。
+
+Mage签名基线8条均为KEEP_NON_CALL_PHONE_USE，即本组非手机过滤0/4、真手机保留4/4。7条同证据及版本缓存、n07重新推理；原始服务推理耗时均值10.197秒，缓存HTTP返回耗时不可作为模型推理速度。
+
+独立脚本只写staging，不改事件、人工标注或生产决策。Qwen仅loopback单实例、zty非特权推理；root生命周期代码禁止生产包导入及字节码写入。systemd实际验证：RuntimeMax25分钟、MemoryMax21GiB、CPUQuota800%、KillMode=mixed、ExecStopPost启动Mage。运行期前台监督轮询间隔2秒、HTTP超时10秒，不是硬性两秒内检测保证。异常也必须尝试启动Mage，清理失败不可跳过恢复。
+
+09:34第一次启动因前台监督异常停止，Qwen判断0条；完整失败输出保留为`qwen-startup-aborted-0934`，自动恢复经签名检查于09:35确认Mage ready。原始监督异常未被保留，不能断言是掉帧或网页问题；补充原始异常记录后进行一次同阈值诊断复跑，不放宽前台保护。
+
+诊断复跑09:36:07开始，09:36:36 Qwen ready，09:48:48完成全部8条，09:48:52请求恢复Mage，09:48:53systemd成功结束。实际执行脚本SHA256 `0162dc1b19e8524ffa189e4ac495855e19302448885b0f4304a55b4f599b79bd`，与Git文件一致。没有再次前台保护异常。FFV1 native/focus共320帧经重新解码逐像素核对一致；Qwen10次请求实际解码188帧（native8×20、杯子focus20和early8）。10次标签格式均合法且非截断，但仍有1128条non-consecutive token position警告，时间/位置编码问题未证明解决，不能据此宣称模型固有能力或总体准确率。
+
+| 样本 | 画面核对 | Mage最终标签 | Qwen最终标签 | Qwen累计请求秒数 |
+| --- | --- | --- | --- | ---: |
+| n01 | 包装/纸片 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 78.93 |
+| n02 | 纸包/包装 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 76.51 |
+| n03 | 饮杯 | KEEP_NON_CALL_PHONE_USE | UNCERTAIN | 188.72 |
+| n07 | 纸质材料 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 76.48 |
+| p02 | 真手机 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 76.58 |
+| p03 | 真手机 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 78.08 |
+| p05 | 真手机 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 78.05 |
+| p11 | 真手机 | KEEP_NON_CALL_PHONE_USE | KEEP_NON_CALL_PHONE_USE | 78.45 |
+
+杯子native76.34秒、focus77.41秒均FILTER_FALSE_POSITIVE，但early34.97秒为UNCERTAIN，按生产补救规则最终保留。两模型本组非手机过滤均0/4，真手机保留均4/4；Qwen每事件请求累计均值91.475秒、native均值77.428秒。Mage原记录均值10.197秒，混合历史缓存记录和一次新推理，不是同步性能基准。现网timeout_seconds实际120、max_attempts=5；杯子188.72秒已超过当前单次请求超时，所以不能将此离线模型直接替换上线。
+
+结论：本组样本没有减误报，当前10GB显存CPU/GPU混合运行又明显更慢，不支持直接替代Mage。三条非手机native误判KEEP后都不会触发手部focus检查；可另行批准测试“手部视图必查”的证据策略，但此次不改变生产层级、提示词或过滤。
+
+原始结果仅存staging和本机`output/phone-gate-compare-20260917/`，包括selected.json、Mage签名校验结果、逐像素证明、Qwen完整响应、manifest、props及原生日志，不提交监控数据。测试脚本及说明单独纳入Git。
+
+恢复验收：Mage在09:51:40完成加载，签名health验证ready且生产/capture版本保持不变；随后真实前台production已接纳4条，累计已完成推理65.258秒、最近已完成9.432秒、production_errors=0。Qwen18879无监听，仅Mage192.168.104.54:8879监听；网页running、8路online、79.733FPS、alerts=[]、内存压力false。复跑暂停Mage复核至ready约15.5分钟，采集/网页保留运行，不能称复核零中断。本机保存`恢复验证.json`。
